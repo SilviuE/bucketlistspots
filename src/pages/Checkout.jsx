@@ -1,0 +1,347 @@
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  Box, Container, Typography, Button, Paper, Avatar, Divider, TextField, MenuItem, Stepper, Step, StepLabel, Alert, Chip, CircularProgress,
+} from '@mui/material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import LockIcon from '@mui/icons-material/Lock';
+import PaymentIcon from '@mui/icons-material/Payment';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import IconButton from '@mui/material/IconButton';
+import { fetchGuideById } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
+
+const paymentMethods = [
+  { id: 'stripe', label: 'Credit/Debit Card (Stripe)', icon: PaymentIcon, desc: 'Secure 3D Secure checkout' },
+  { id: 'wise', label: 'Direct Bank Transfer (Wise)', icon: AccountBalanceIcon, desc: 'Pay deposit via bank transfer' },
+  { id: 'stripe_link', label: 'Stripe Link', icon: LockIcon, desc: 'Fast checkout with saved card' },
+];
+
+export default function Checkout() {
+  const { guideId } = useParams();
+  const navigate = useNavigate();
+  const { user, isLoggedIn, addBooking, addBucketListItem } = useAuth();
+  const [searchParams] = useSearchParams();
+
+  const [guide, setGuide] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [bookingComplete, setBookingComplete] = useState(false);
+
+  // Handle Stripe redirect back
+  useEffect(() => {
+    const paymentStatus = searchParams.get('payment');
+    if (paymentStatus === 'success') {
+      const savedBooking = sessionStorage.getItem('pending_booking');
+      if (savedBooking) {
+        const booking = JSON.parse(savedBooking);
+        addBooking(booking);
+        addBucketListItem({
+          title: `${booking.route || 'Adventure'} with ${booking.guideName}`,
+          destination: booking.destination || '',
+          status: 'booked',
+          targetDate: booking.date,
+          notes: `Deposit paid: $${booking.deposit}`,
+        });
+        sessionStorage.removeItem('pending_booking');
+        setBookingComplete(true);
+      }
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    fetchGuideById(guideId).then(g => { setGuide(g); setLoading(false); });
+  }, [guideId]);
+
+  const [step, setStep] = useState(0);
+  const [selectedRoute, setSelectedRoute] = useState('');
+  const [date, setDate] = useState('');
+  const [travelers, setTravelers] = useState(1);
+  const [name, setName] = useState(user?.name || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [phone, setPhone] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('stripe');
+  const [processing, setProcessing] = useState(false);
+
+  if (loading) {
+    return (
+      <Container maxWidth="sm" sx={{ px: 2, pt: 8, textAlign: 'center' }}>
+        <CircularProgress sx={{ color: '#2A9D8F' }} />
+      </Container>
+    );
+  }
+
+  if (!guide) {
+    return (
+      <Container maxWidth="sm" sx={{ px: 2, pt: 4, textAlign: 'center' }}>
+        <Typography variant="h2">Guide not found</Typography>
+        <Button variant="contained" onClick={() => navigate('/book')}>Browse Guides</Button>
+      </Container>
+    );
+  }
+
+  const routeObj = guide.routes.find(r => r.name === selectedRoute);
+  const routePrice = routeObj?.price || guide.price;
+  const depositAmount = Math.round(routePrice * 0.2);
+  const balanceAmount = routePrice - depositAmount;
+  const totalTrip = routePrice * travelers;
+  const totalDeposit = depositAmount * travelers;
+
+  const handleBook = async () => {
+    if (!isLoggedIn) {
+      navigate('/auth');
+      return;
+    }
+    setProcessing(true);
+    // Save booking to session storage so it persists after Stripe redirect
+    const pendingBooking = {
+      id: 'bk_' + Date.now(),
+      guideName: guide.name,
+      guideId: guide.id,
+      route: selectedRoute,
+      date,
+      travelers,
+      deposit: totalDeposit,
+      total: totalTrip,
+      balance: balanceAmount * travelers,
+      guestName: name,
+      guestEmail: email,
+      guestPhone: phone,
+      paymentMethod,
+      status: 'Deposit Paid — Awaiting Confirmation',
+      bookedAt: new Date().toISOString(),
+      destination: guide.location,
+    };
+    sessionStorage.setItem('pending_booking', JSON.stringify(pendingBooking));
+
+    try {
+      const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:3002/api/create-checkout' : '/api/create-checkout';
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          routeName: selectedRoute,
+          guideName: guide.name,
+          guideId: guide.id,
+          price: routePrice,
+          travelers,
+          depositAmount: totalDeposit,
+          guestName: name,
+          guestEmail: email,
+          date,
+        }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        alert('Payment failed: ' + (data.error || 'Unknown error'));
+        setProcessing(false);
+      }
+    } catch (err) {
+      alert('Could not connect to payment server. Make sure it is running on port 3002.');
+      setProcessing(false);
+    }
+  };
+
+  if (bookingComplete) {
+    return (
+      <Container maxWidth="sm" sx={{ px: 2, pt: 4, textAlign: 'center' }}>
+        <Box sx={{ p: 4 }}>
+          <Box sx={{ width: 64, height: 64, borderRadius: '50%', bgcolor: '#4CAF50', display: 'flex', alignItems: 'center', justifyContent: 'center', mx: 'auto', mb: 2 }}>
+            <Typography sx={{ color: '#FFF', fontSize: 28 }}>✓</Typography>
+          </Box>
+          <Typography variant="h2" sx={{ color: '#2A9D8F', mb: 1 }}>Booking Confirmed!</Typography>
+          <Typography variant="body2" color="text.secondary" mb={3}>
+            Your deposit of <strong>${totalDeposit.toLocaleString()}</strong> has been received. {guide.name} will confirm your dates within 24 hours.
+          </Typography>
+
+          <Alert severity="success" sx={{ mb: 2, borderRadius: 2, textAlign: 'left' }}>
+            <Typography variant="caption" fontWeight={700}>Payment Receipt</Typography>
+            <Typography variant="caption" display="block">Paid via: {paymentMethods.find(p => p.id === paymentMethod)?.label || 'Card'}</Typography>
+            <Typography variant="caption" display="block">Amount: ${totalDeposit.toLocaleString()}</Typography>
+            <Typography variant="caption" display="block">Booking ref: {Date.now().toString(36).toUpperCase()}</Typography>
+          </Alert>
+
+          <Alert severity="info" sx={{ mb: 3, textAlign: 'left', borderRadius: 2 }}>
+            <Typography variant="caption" fontWeight={700}>Next Steps:</Typography>
+            <Typography variant="caption" display="block">1. Check your email for booking confirmation and receipt.</Typography>
+            <Typography variant="caption" display="block">2. {guide.name} will reach out via WhatsApp or email within 24 hours.</Typography>
+            <Typography variant="caption" display="block">3. Pay the balance of <strong>${(balanceAmount * travelers).toLocaleString()}</strong> directly to {guide.name} before the trip (via Wise, bank transfer, or cash on arrival).</Typography>
+          </Alert>
+
+          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
+            <Button variant="outlined" onClick={() => navigate('/bucketlist')}>View My Trips</Button>
+            <Button variant="contained" color="primary" onClick={() => navigate('/dashboard')}>My Dashboard</Button>
+          </Box>
+        </Box>
+      </Container>
+    );
+  }
+
+  return (
+    <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <IconButton onClick={() => navigate(-1)} size="small"><ArrowBackIcon /></IconButton>
+        <Typography variant="h2">Book Your Adventure</Typography>
+      </Box>
+
+      <Paper elevation={0} sx={{ p: 1.5, mb: 3, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+          <Avatar src={guide.photo} sx={{ width: 44, height: 44 }} />
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="body2" fontWeight={700}>{guide.name}</Typography>
+            <Typography variant="caption" color="text.secondary">{guide.location} · {guide.tradingName}</Typography>
+          </Box>
+          <Chip label={`${guide.rating} ★`} size="small" sx={{ bgcolor: '#FFB80020', color: '#FFB800', fontWeight: 700 }} />
+        </Box>
+      </Paper>
+
+      <Stepper activeStep={step} sx={{ mb: 3, '& .MuiStepLabel-root .Mui-active': { color: '#2A9D8F' }, '& .MuiStepLabel-root .Mui-completed': { color: '#2A9D8F' } }}>
+        <Step><StepLabel>Route & Date</StepLabel></Step>
+        <Step><StepLabel>Your Details</StepLabel></Step>
+        <Step><StepLabel>Pay</StepLabel></Step>
+      </Stepper>
+
+      {step === 0 && (
+        <Box>
+          <TextField
+            select fullWidth label="Select Route"
+            value={selectedRoute}
+            onChange={(e) => setSelectedRoute(e.target.value)}
+            sx={{ mb: 2 }}
+          >
+            {guide.routes.map(r => (
+              <MenuItem key={r.name} value={r.name}>
+                {r.name} — {r.days} days — ${r.price.toLocaleString()}/person
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField fullWidth label="Preferred Start Date" type="date" value={date}
+            onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }} sx={{ mb: 2 }} />
+          <TextField fullWidth label="Number of Travelers" type="number" value={travelers}
+            onChange={(e) => setTravelers(Math.max(1, parseInt(e.target.value) || 1))}
+            inputProps={{ min: 1 }} sx={{ mb: 3 }} />
+          <Button variant="contained" color="primary" fullWidth size="large"
+            disabled={!selectedRoute || !date} onClick={() => setStep(1)}>
+            Continue
+          </Button>
+        </Box>
+      )}
+
+      {step === 1 && (
+        <Box>
+          {!isLoggedIn && (
+            <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
+              <Typography variant="caption">
+                <strong>Already have an account?</strong>{' '}
+                <Box component="span" onClick={() => navigate('/auth')} sx={{ color: '#2A9D8F', fontWeight: 700, cursor: 'pointer' }}>Sign in</Box>
+                {' '}to auto-fill your details.
+              </Typography>
+            </Alert>
+          )}
+          <TextField fullWidth label="Full Name" value={name} onChange={(e) => setName(e.target.value)} sx={{ mb: 2 }} />
+          <TextField fullWidth label="Email Address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} sx={{ mb: 2 }} />
+          <TextField fullWidth label="Phone (WhatsApp recommended)" value={phone} onChange={(e) => setPhone(e.target.value)} sx={{ mb: 3 }} placeholder="+44..." />
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button variant="outlined" onClick={() => setStep(0)} sx={{ flex: 1 }}>Back</Button>
+            <Button variant="contained" color="primary" onClick={() => setStep(2)} disabled={!name || !email} sx={{ flex: 2 }}>Continue</Button>
+          </Box>
+        </Box>
+      )}
+
+      {step === 2 && (
+        <Box>
+          <Paper elevation={0} sx={{ p: 2, mb: 2, bgcolor: '#F4F5F7', borderRadius: 2 }}>
+            <Typography variant="body2" fontWeight={700} mb={1.5}>Booking Summary</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption">Guide</Typography>
+              <Typography variant="caption" fontWeight={600}>{guide.name}</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption">Route</Typography>
+              <Typography variant="caption" fontWeight={600}>{selectedRoute}</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption">Travelers</Typography>
+              <Typography variant="caption" fontWeight={600}>{travelers}</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption">Date</Typography>
+              <Typography variant="caption" fontWeight={600}>{date}</Typography>
+            </Box>
+            <Divider sx={{ my: 1.5 }} />
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="body2" fontWeight={700}>Total Trip</Typography>
+              <Typography variant="body2" fontWeight={800}>${totalTrip.toLocaleString()}</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">Deposit Due Now (20%)</Typography>
+              <Typography variant="caption" fontWeight={700} sx={{ color: '#E05D3A' }}>${totalDeposit.toLocaleString()}</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Typography variant="caption" color="text.secondary">Pay {guide.name} Directly Later (80%)</Typography>
+              <Typography variant="caption" fontWeight={600}>${(balanceAmount * travelers).toLocaleString()}</Typography>
+            </Box>
+          </Paper>
+
+          <Typography variant="caption" fontWeight={700} gutterBottom display="block">
+            Payment Method
+          </Typography>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>
+            {paymentMethods.map(pm => (
+              <Paper key={pm.id} elevation={0}
+                onClick={() => setPaymentMethod(pm.id)}
+                sx={{
+                  p: 1.5, borderRadius: 2, cursor: 'pointer', display: 'flex', gap: 1.5, alignItems: 'center',
+                  border: paymentMethod === pm.id ? '2px solid #2A9D8F' : '1px solid rgba(16,42,67,0.12)',
+                  bgcolor: paymentMethod === pm.id ? '#f0faf8' : '#FFF',
+                }}
+              >
+                <pm.icon sx={{ color: '#102A43', fontSize: 24 }} />
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="body2" fontWeight={600}>{pm.label}</Typography>
+                  <Typography variant="caption" color="text.secondary">{pm.desc}</Typography>
+                </Box>
+                <Box sx={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid', borderColor: paymentMethod === pm.id ? '#2A9D8F' : 'rgba(16,42,67,0.2)', bgcolor: paymentMethod === pm.id ? '#2A9D8F' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {paymentMethod === pm.id && <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#FFF' }} />}
+                </Box>
+              </Paper>
+            ))}
+          </Box>
+
+          <Alert severity="info" sx={{ mb: 2, borderRadius: 2, fontSize: 12 }}>
+            BucketListSpots Ltd acts solely as a disclosed booking agent (Company No. 16595661). Your contract for the trip is directly with {guide.name}. Your deposit is processed securely via Stripe.
+          </Alert>
+
+          <Box sx={{ p: 2, mb: 2, bgcolor: '#FFF', borderRadius: 2, border: '1px solid rgba(16,42,67,0.12)', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
+            onClick={() => setConfirmed(!confirmed)}
+          >
+            <Box sx={{ width: 20, height: 20, borderRadius: 0.5, border: '2px solid', borderColor: confirmed ? '#2A9D8F' : 'rgba(16,42,67,0.3)', bgcolor: confirmed ? '#2A9D8F' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.2, flexShrink: 0, color: '#FFF', fontSize: 12, fontWeight: 700 }}>
+              {confirmed && '✓'}
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              <strong>I acknowledge</strong> that I have read and accept the{'\n'}
+              <strong>BucketListSpots Terms of Use</strong> and{'\n'}
+              <strong>{guide.name}'s Booking Conditions</strong>.
+              I understand high-altitude trekking involves inherent risks and confirm that all travelers have appropriate travel insurance.
+            </Typography>
+          </Box>
+
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button variant="outlined" onClick={() => setStep(1)} sx={{ flex: 1 }}>Back</Button>
+            <Button
+              variant="contained" color="primary"
+              onClick={handleBook}
+              disabled={!confirmed || processing}
+              sx={{ flex: 2 }}
+            >
+              {processing ? 'Processing...' : `Pay Deposit $${totalDeposit.toLocaleString()}`}
+            </Button>
+          </Box>
+        </Box>
+      )}
+    </Container>
+  );
+}

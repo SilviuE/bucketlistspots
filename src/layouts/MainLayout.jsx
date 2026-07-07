@@ -1,0 +1,80 @@
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Box, Paper, BottomNavigation, BottomNavigationAction, Avatar, IconButton, Typography } from '@mui/material';
+import ExploreOutlinedIcon from '@mui/icons-material/ExploreOutlined';
+import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
+import BookmarkBorderOutlinedIcon from '@mui/icons-material/BookmarkBorderOutlined';
+import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import LogoutIcon from '@mui/icons-material/Logout';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import { useAuth } from '../context/AuthContext';
+
+const navItems = [
+  { label: 'Discover', value: '/', icon: ExploreOutlinedIcon },
+  { label: 'Book Now', value: '/book', icon: SearchOutlinedIcon },
+  { label: 'Bucket List', value: '/bucketlist', icon: BookmarkBorderOutlinedIcon },
+  { label: 'Trust Hub', value: '/trust', icon: VerifiedOutlinedIcon },
+];
+
+export default function MainLayout() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user, isLoggedIn, logout } = useAuth();
+
+  const currentValue = navItems.find(item => {
+    if (item.value === '/') return location.pathname === '/';
+    return location.pathname.startsWith(item.value);
+  })?.value || '/';
+
+  const isDashboard = location.pathname.startsWith('/dashboard') ||
+    location.pathname.startsWith('/guide-dashboard') ||
+    location.pathname.startsWith('/ambassador-dashboard') ||
+    location.pathname.startsWith('/auth');
+
+  const getDashboardLink = () => {
+    if (!user) return '/auth';
+    if (user.role === 'guide') return '/guide-dashboard';
+    if (user.role === 'ambassador') return '/ambassador-dashboard';
+    return '/dashboard';
+  };
+
+  if (isDashboard) {
+    return (
+      <Box sx={{ pb: '72px', minHeight: '100vh', bgcolor: 'background.default' }}>
+        <Outlet />
+        <Paper sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100 }} elevation={0}>
+          <BottomNavigation value={currentValue} onChange={(_, val) => navigate(val)} showLabels>
+            {navItems.map(item => (
+              <BottomNavigationAction key={item.value} label={item.label} value={item.value} icon={<item.icon />} />
+            ))}
+          </BottomNavigation>
+        </Paper>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ pb: '72px', minHeight: '100vh', bgcolor: 'background.default' }}>
+      {isLoggedIn && (
+        <Box sx={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1200, display: 'flex', justifyContent: 'flex-end', p: 1.5, gap: 0.5 }}>
+          <IconButton size="small" onClick={() => navigate(getDashboardLink())} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+            <DashboardIcon sx={{ fontSize: 20, color: '#102A43' }} />
+          </IconButton>
+          <IconButton size="small" onClick={() => { logout(); navigate('/'); }} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+            <LogoutIcon sx={{ fontSize: 20, color: '#E05D3A' }} />
+          </IconButton>
+        </Box>
+      )}
+      <Box sx={{ pt: isLoggedIn ? '52px' : 0 }}>
+        <Outlet />
+      </Box>
+      <Paper sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100 }} elevation={0}>
+        <BottomNavigation value={currentValue} onChange={(_, val) => navigate(val)} showLabels>
+          {navItems.map(item => (
+            <BottomNavigationAction key={item.value} label={item.label} value={item.value} icon={<item.icon />} />
+          ))}
+        </BottomNavigation>
+      </Paper>
+    </Box>
+  );
+}
