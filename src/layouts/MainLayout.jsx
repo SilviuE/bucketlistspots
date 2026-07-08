@@ -4,9 +4,9 @@ import ExploreOutlinedIcon from '@mui/icons-material/ExploreOutlined';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import BookmarkBorderOutlinedIcon from '@mui/icons-material/BookmarkBorderOutlined';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
-import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import LogoutIcon from '@mui/icons-material/Logout';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import { useAuth } from '../context/AuthContext';
 import { getStoredCurrency, setStoredCurrency } from '../lib/currency';
 import { useState } from 'react';
@@ -67,6 +67,11 @@ export default function MainLayout() {
         ))}
         {isLoggedIn && (
           <>
+            {user?.role === 'admin' && (
+              <IconButton size="small" onClick={() => navigate('/admin/applications')} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+                <RateReviewIcon sx={{ fontSize: 20, color: '#E9C46A' }} />
+              </IconButton>
+            )}
             <IconButton size="small" onClick={() => navigate(getDashboardLink())} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
               <DashboardIcon sx={{ fontSize: 20, color: '#102A43' }} />
             </IconButton>

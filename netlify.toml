@@ -3,6 +3,16 @@
   command = "npm install"
 
 [[redirects]]
+  from = "/api/apply-guide"
+  to = "/.netlify/functions/apply-guide"
+  status = 200
+
+[[redirects]]
+  from = "/api/applications"
+  to = "/.netlify/functions/applications"
+  status = 200
+
+[[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
   status = 200

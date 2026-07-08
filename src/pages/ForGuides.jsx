@@ -1,5 +1,5 @@
+import { Link } from 'react-router-dom';
 import { Box, Container, Typography, Button, Paper, List, ListItem, ListItemIcon, ListItemText } from '@mui/material';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import WebIcon from '@mui/icons-material/Web';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import PaymentsIcon from '@mui/icons-material/Payments';
@@ -43,7 +43,8 @@ export default function ForGuides() {
             color="primary"
             size="large"
             fullWidth
-            href="mailto:hello@bucketlistspots.com?subject=Founding%20Guide%20Application"
+            component={Link}
+            to="/become-a-guide"
           >
             Apply for Verification
           </Button>
@@ -114,7 +115,8 @@ export default function ForGuides() {
           color="primary"
           size="large"
           fullWidth
-          href="mailto:hello@bucketlistspots.com?subject=Founding%20Guide%20Application"
+          component={Link}
+          to="/become-a-guide"
           sx={{ mb: 2 }}
         >
           Apply for Verification
