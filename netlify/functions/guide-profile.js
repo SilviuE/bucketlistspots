@@ -104,5 +104,46 @@ exports.handler = async (event) => {
     return { statusCode: 200, headers, body: JSON.stringify(data) };
   }
 
+  // POST /api/guide-profile/submit — submit for admin review
+  if (method === 'POST' && path[0] === 'submit') {
+    const { data: guide } = await supabase.from('guides').select('*').eq('user_id', user.id).single();
+    if (!guide) return { statusCode: 404, headers, body: JSON.stringify({ error: 'Guide profile not found' }) };
+    if (guide.status === 'published') return { statusCode: 400, headers, body: JSON.stringify({ error: 'Already published' }) };
+
+    const { data, error } = await supabase.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id).select().single();
+    if (error) return { statusCode: 500, headers, body: JSON.stringify({ error: error.message }) };
+
+    if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
+      const html = `
+        <h2>Guide Profile Ready for Review</h2>
+        <p><strong>${guide.trading_name || 'Unnamed Guide'}</strong> has submitted their profile for review.</p>
+        <table style="border-collapse:collapse;width:100%">
+          ${[['Name', guide.trading_name], ['Location', guide.location],
+             ['Price', guide.price ? '$' + guide.price : '—'],
+             ['Languages', Array.isArray(guide.languages) ? guide.languages.join(', ') : guide.languages],
+             ['Experience', guide.experience + ' years'],
+             ['Routes', (guide.routes || []).length]].map(([k, v]) =>
+            `<tr style="border:1px solid #ddd"><td style="padding:6px;font-weight:700">${k}</td><td style="padding:6px">${v || '—'}</td></tr>`
+          ).join('')}
+        </table>
+        <p><a href="https://bucketlistspots.com/admin/applications" style="background:#2A9D8F;color:#FFF;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:10px">Review in Dashboard</a></p>
+        <p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>
+      `;
+
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'BucketListSpots <notifications@bucketlistspots.com>',
+          to: process.env.NOTIFICATION_EMAIL,
+          subject: `Guide Profile Ready: ${guide.trading_name || 'Unnamed Guide'} submitted for review`,
+          html,
+        }),
+      });
+    }
+
+    return { statusCode: 200, headers, body: JSON.stringify(data) };
+  }
+
   return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 };

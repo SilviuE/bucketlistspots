@@ -17,7 +17,7 @@ import RouteIcon from '@mui/icons-material/Route';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 
-const statusColors = { draft: '#9E9E9E', published: '#2A9D8F', featured: '#FFB800' };
+const statusColors = { draft: '#9E9E9E', pending: '#E9C46A', published: '#2A9D8F', featured: '#FFB800' };
 const difficulties = ['Easy', 'Moderate', 'Challenging', 'Very Challenging'];
 
 export default function GuideDashboard() {
@@ -88,6 +88,25 @@ export default function GuideDashboard() {
       const data = await res.json();
       setGuide(data);
       setProfileOpen(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitForReview = async () => {
+    setSaving(true);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      const res = await fetch('/api/guide-profile/submit', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Submit failed');
+      const data = await res.json();
+      setGuide(data);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -261,6 +280,18 @@ export default function GuideDashboard() {
               3. Submit for review — an admin will publish you live
             </Typography>
           </Paper>
+
+          {guide?.status === 'draft' && profileComplete && (
+            <Button variant="contained" color="primary" size="large" fullWidth onClick={submitForReview} disabled={saving} sx={{ mt: 2 }}>
+              {saving ? <CircularProgress size={24} sx={{ color: '#FFF' }} /> : 'Submit for Review'}
+            </Button>
+          )}
+          {guide?.status === 'pending' && (
+            <Paper elevation={0} sx={{ p: 2, mt: 2, border: '1px solid #E9C46A', borderRadius: 2, bgcolor: '#FFF8E1', textAlign: 'center' }}>
+              <Typography variant="body2" fontWeight={700} sx={{ color: '#E9C46A' }}>Submitted for Review</Typography>
+              <Typography variant="caption" color="text.secondary">An admin will review your profile shortly. You'll receive an email when you're live.</Typography>
+            </Paper>
+          )}
         </>
       )}
 
