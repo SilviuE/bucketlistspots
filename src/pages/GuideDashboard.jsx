@@ -1,75 +1,214 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Container, Typography, Paper, Button, Chip, IconButton, Grid, Avatar, TextField,
-  Divider, LinearProgress, Dialog, DialogTitle, DialogContent, DialogActions,
+  Box, Container, Typography, Paper, Button, Chip, IconButton, Grid, TextField, MenuItem,
+  Dialog, DialogTitle, DialogContent, DialogActions, Alert, CircularProgress,
 } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
+import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import PeopleIcon from '@mui/icons-material/People';
 import StarIcon from '@mui/icons-material/Star';
-import VisibilityIcon from '@mui/icons-material/Visibility';
+import RouteIcon from '@mui/icons-material/Route';
+import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
-import guidesData from '../data/guides';
+
+const statusColors = { draft: '#9E9E9E', published: '#2A9D8F', featured: '#FFB800' };
+const difficulties = ['Easy', 'Moderate', 'Challenging', 'Very Challenging'];
 
 export default function GuideDashboard() {
   const navigate = useNavigate();
-  const { user, logout, guideBookings, guideEarnings, guideAvailability, updateAvailability, confirmGuideBooking, completeGuideBooking } = useAuth();
+  const { user, logout } = useAuth();
+  const [guide, setGuide] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
-  const [availOpen, setAvailOpen] = useState(false);
-  const [availForm, setAvailForm] = useState(guideAvailability || '');
+  const [routeDialog, setRouteDialog] = useState(false);
+  const [editingRoute, setEditingRoute] = useState(null);
+  const [routeForm, setRouteForm] = useState({ name: '', days: 1, difficulty: 'Moderate', price: '', description: '', image: '' });
+  const [saving, setSaving] = useState(false);
+  const [profileForm, setProfileForm] = useState({ trading_name: '', bio: '', location: '', price: '', languages: '', experience: '' });
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user || user.role !== 'guide') return;
+    fetchProfile();
+  }, [user]);
+
+  const fetchProfile = async () => {
+    setLoading(true);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      const res = await fetch('/api/guide-profile', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) throw new Error('Failed to load profile');
+      const data = await res.json();
+      setGuide(data);
+      if (data) {
+        setProfileForm({
+          trading_name: data.trading_name || '',
+          bio: data.bio || '',
+          location: data.location || '',
+          price: data.price || '',
+          languages: Array.isArray(data.languages) ? data.languages.join(', ') : data.languages || '',
+          experience: data.experience || '',
+        });
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveProfile = async () => {
+    setSaving(true);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      const res = await fetch('/api/guide-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          trading_name: profileForm.trading_name,
+          bio: profileForm.bio,
+          location: profileForm.location,
+          price: parseInt(profileForm.price) || 0,
+          languages: profileForm.languages.split(',').map(s => s.trim()).filter(Boolean),
+          experience: parseInt(profileForm.experience) || 0,
+        }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      const data = await res.json();
+      setGuide(data);
+      setProfileOpen(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveRoute = async () => {
+    if (!routeForm.name || !routeForm.price) return;
+    setSaving(true);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      const body = {
+        name: routeForm.name,
+        days: parseInt(routeForm.days) || 1,
+        difficulty: routeForm.difficulty,
+        price: parseInt(routeForm.price) || 0,
+        description: routeForm.description,
+        image: routeForm.image,
+      };
+
+      const url = editingRoute
+        ? `/api/guide-profile/routes/${editingRoute.id}`
+        : '/api/guide-profile/routes';
+      const method = editingRoute ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      const data = await res.json();
+      setGuide(data);
+      setRouteDialog(false);
+      setEditingRoute(null);
+      setRouteForm({ name: '', days: 1, difficulty: 'Moderate', price: '', description: '', image: '' });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteRoute = async (routeId) => {
+    if (!confirm('Delete this route?')) return;
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not authenticated');
+      const res = await fetch(`/api/guide-profile/routes/${routeId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) throw new Error('Delete failed');
+      const data = await res.json();
+      setGuide(data);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const handleLogout = () => { logout(); navigate('/'); };
 
-  const guide = guidesData.find(g => g.tradingName?.includes('KilimanjaroJoy')) || guidesData[0];
-  const totalEarnings = guideEarnings.reduce((sum, e) => sum + e.amount, 0);
-  const pendingBookings = guideBookings.filter(b => b.status === 'pending');
-  const confirmedBookings = guideBookings.filter(b => b.status === 'confirmed');
+  if (!user || user.role !== 'guide') {
+    return (
+      <Container maxWidth="sm" sx={{ px: 2, pt: 8, textAlign: 'center' }}>
+        <Typography variant="h2" mb={1}>Guide Access Required</Typography>
+        <Button variant="contained" onClick={() => navigate('/auth')}>Sign In</Button>
+      </Container>
+    );
+  }
 
-  const handleSaveAvailability = () => {
-    updateAvailability(availForm);
-    setAvailOpen(false);
-  };
+  if (loading) {
+    return <Container maxWidth="sm" sx={{ px: 2, pt: 8, textAlign: 'center' }}><CircularProgress /></Container>;
+  }
+
+  const routes = guide?.routes || [];
+  const profileComplete = guide?.trading_name && guide?.bio && guide?.location && guide?.price && routes.length > 0;
+  const progressItems = [
+    { done: !!guide?.trading_name, label: 'Set your trading name' },
+    { done: !!guide?.bio, label: 'Write your bio' },
+    { done: !!guide?.location, label: 'Add your location' },
+    { done: !!guide?.price, label: 'Set your starting price' },
+    { done: routes.length > 0, label: 'Add at least one route' },
+  ];
+  const progress = Math.round(progressItems.filter(p => p.done).length / progressItems.length * 100);
 
   const tabs = [
     { key: 'overview', label: 'Overview' },
-    { key: 'bookings', label: 'Bookings' },
-    { key: 'earnings', label: 'Earnings' },
+    { key: 'routes', label: `Routes (${routes.length})` },
     { key: 'profile', label: 'Profile' },
   ];
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      {error && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>{error}</Alert>}
+
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <Avatar src={guide?.photo} sx={{ width: 44, height: 44, border: '2px solid #2A9D8F' }} />
-          <Box>
-            <Typography variant="h1" sx={{ fontSize: '20px' }}>{user?.name || 'Guide'}</Typography>
-            <Typography variant="caption" color="text.secondary">{guide?.tradingName}</Typography>
-          </Box>
+        <Box>
+          <Typography variant="h1" sx={{ fontSize: '20px' }}>{guide?.trading_name || user?.name || 'Guide Dashboard'}</Typography>
+          {guide?.status && <Chip label={guide.status} size="small" sx={{ color: '#FFF', bgcolor: statusColors[guide.status] || '#999', fontSize: 10, mt: 0.3 }} />}
         </Box>
-        <IconButton onClick={handleLogout} sx={{ color: 'text.secondary' }}><LogoutIcon /></IconButton>
+        <IconButton onClick={handleLogout}><LogoutIcon /></IconButton>
       </Box>
 
-      <Grid container spacing={1.5} sx={{ mb: 2 }}>
-        {[
-          { label: 'Total Earned', value: `$${totalEarnings.toLocaleString()}`, icon: PaymentsIcon, color: '#2A9D8F' },
-          { label: 'Pending', value: pendingBookings.length, icon: PeopleIcon, color: '#E05D3A' },
-          { label: 'Confirmed', value: confirmedBookings.length, icon: CheckCircleIcon, color: '#4CAF50' },
-          { label: 'Rating', value: `${guide?.rating || 0}`, icon: StarIcon, color: '#FFB800' },
-        ].map(s => (
-          <Grid item xs={6} key={s.label}>
-            <Paper elevation={0} sx={{ p: 1.5, textAlign: 'center', border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-              <s.icon sx={{ color: s.color, fontSize: 24, mb: 0.5 }} />
-              <Typography fontWeight={800} sx={{ fontSize: 20, color: s.color }}>{s.value}</Typography>
-              <Typography variant="caption" color="text.secondary">{s.label}</Typography>
-            </Paper>
-          </Grid>
-        ))}
-      </Grid>
+      {!profileComplete && (
+        <Paper elevation={0} sx={{ p: 2, mb: 2, border: '1px solid rgba(16,42,67,0.12)', borderRadius: 3 }}>
+          <Typography variant="body2" fontWeight={700} mb={1}>Complete Your Profile</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+            <Box sx={{ flex: 1, height: 8, bgcolor: '#E0E0E0', borderRadius: 4, overflow: 'hidden' }}>
+              <Box sx={{ width: `${progress}%`, height: '100%', bgcolor: '#2A9D8F', borderRadius: 4, transition: 'width 0.3s' }} />
+            </Box>
+            <Typography variant="caption" fontWeight={700}>{progress}%</Typography>
+          </Box>
+          {progressItems.filter(p => !p.done).slice(0, 2).map(p => (
+            <Typography key={p.label} variant="caption" color="text.secondary" display="block">• {p.label}</Typography>
+          ))}
+          <Button size="small" variant="contained" color="primary" sx={{ mt: 1, fontSize: 12 }} onClick={() => setProfileOpen(true)}>Complete Now</Button>
+        </Paper>
+      )}
 
       <Box sx={{ display: 'flex', gap: 0.5, mb: 2 }}>
         {tabs.map(t => (
@@ -81,200 +220,162 @@ export default function GuideDashboard() {
 
       {tab === 'overview' && (
         <>
-          <Paper elevation={0} sx={{ p: 2, mb: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-              <Typography variant="body2" fontWeight={700}>Availability</Typography>
-              <Button size="small" variant="text" onClick={() => setAvailOpen(true)} sx={{ fontSize: 12 }}>
-                {guideAvailability ? 'Update' : 'Set'}
-              </Button>
-            </Box>
-            <Typography variant="body2" color="text.secondary">
-              {guideAvailability || 'Not set yet. Update your availability.'}
-            </Typography>
-          </Paper>
-
-          <Typography variant="h2" mb={1.5}>Recent Bookings</Typography>
-          {guideBookings.length === 0 ? (
-            <Paper elevation={0} sx={{ p: 3, textAlign: 'center', border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-              <Typography variant="body2" color="text.secondary">No bookings received yet</Typography>
+          <Typography variant="h2" mb={1.5}>Your Routes</Typography>
+          {routes.length === 0 ? (
+            <Paper elevation={0} sx={{ p: 3, textAlign: 'center', border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, mb: 2 }}>
+              <RouteIcon sx={{ fontSize: 48, color: 'rgba(16,42,67,0.15)', mb: 1 }} />
+              <Typography variant="body2" color="text.secondary" mb={1}>No routes yet. Add your first one!</Typography>
+              <Button variant="contained" color="primary" size="small" onClick={() => { setEditingRoute(null); setRouteForm({ name: '', days: 1, difficulty: 'Moderate', price: '', description: '', image: '' }); setRouteDialog(true); }}>Add Route</Button>
             </Paper>
           ) : (
-            guideBookings.slice(0, 3).map((b, i) => (
-              <Paper key={i} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Box>
-                    <Typography variant="body2" fontWeight={700}>{b.guestName || 'Guest'}</Typography>
-                    <Typography variant="caption" color="text.secondary">{b.route} · {b.date} · {b.travelers} travelers</Typography>
-                  </Box>
-                  <Chip label={b.status} size="small"
-                    sx={{ bgcolor: b.status === 'pending' ? '#E05D3A20' : b.status === 'confirmed' ? '#4CAF5020' : '#9E9E9E20', color: b.status === 'pending' ? '#E05D3A' : b.status === 'confirmed' ? '#4CAF50' : '#9E9E9E', fontWeight: 700, fontSize: 10 }} />
-                </Box>
-              </Paper>
-            ))
-          )}
-
-          {/* Quick actions */}
-          <Typography variant="h2" mt={3} mb={1.5}>Quick Actions</Typography>
-          <Grid container spacing={1}>
-            {[
-              { label: 'View My Profile', action: () => navigate('/guide/david-bakari'), color: '#2A9D8F' },
-              { label: 'Browse Marketplace', action: () => navigate('/book'), color: '#102A43' },
-              { label: 'Apply for Premium', action: () => navigate('/guides'), color: '#E05D3A' },
-            ].map(a => (
-              <Grid item xs={4} key={a.label}>
-                <Paper elevation={0} sx={{ p: 1.5, textAlign: 'center', border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, cursor: 'pointer' }} onClick={a.action}>
-                  <Typography variant="caption" fontWeight={700} sx={{ color: a.color }}>{a.label}</Typography>
-                </Paper>
-              </Grid>
-            ))}
-          </Grid>
-        </>
-      )}
-
-      {tab === 'bookings' && (
-        <>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h2">All Bookings</Typography>
-          </Box>
-          {guideBookings.length === 0 ? (
-            <Paper elevation={0} sx={{ p: 4, textAlign: 'center', borderRadius: 3, bgcolor: '#F4F5F7' }}>
-              <PeopleIcon sx={{ fontSize: 48, color: 'rgba(16,42,67,0.2)', mb: 1 }} />
-              <Typography variant="body2" color="text.secondary">No bookings yet</Typography>
-            </Paper>
-          ) : (
-            guideBookings.map((b, i) => (
-              <Paper key={i} elevation={0} sx={{ p: 1.5, mb: 1.5, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-                <Box sx={{ display: 'flex', gap: 1.5 }}>
-                  <Avatar sx={{ bgcolor: '#102A43', width: 40, height: 40 }}>{b.guestName?.[0] || 'G'}</Avatar>
+            routes.map(r => (
+              <Paper key={r.id} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <Box sx={{ flex: 1 }}>
-                    <Typography variant="body2" fontWeight={700}>{b.guestName || 'Guest'}</Typography>
-                    <Typography variant="caption" color="text.secondary" display="block">{b.route} · {b.date}</Typography>
-                    <Typography variant="caption" color="text.secondary">{b.travelers} traveler(s) · Deposit: ${b.deposit}</Typography>
-                    <Box sx={{ display: 'flex', gap: 0.5, mt: 1 }}>
-                      {b.status === 'pending' && (
-                        <>
-                          <Button size="small" variant="contained" color="primary" startIcon={<CheckCircleIcon />}
-                            onClick={() => confirmGuideBooking(b.id)} sx={{ fontSize: 10, py: 0.3 }}>Confirm</Button>
-                          <Button size="small" variant="outlined" color="error" startIcon={<CancelIcon />} sx={{ fontSize: 10, py: 0.3 }}>Decline</Button>
-                        </>
-                      )}
-                      {b.status === 'confirmed' && (
-                        <Button size="small" variant="contained" color="success" onClick={() => completeGuideBooking(b.id)} sx={{ fontSize: 10, py: 0.3 }}>
-                          Mark Completed
-                        </Button>
-                      )}
-                      {b.status === 'completed' && <Chip label="Completed" size="small" color="success" />}
-                    </Box>
+                    <Typography variant="body2" fontWeight={700}>{r.name}</Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">{r.days} day(s) · {r.difficulty} · ${r.price}/person</Typography>
+                    {r.description && <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.3 }}>{r.description}</Typography>}
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 0.3 }}>
+                    <IconButton size="small" onClick={() => { setEditingRoute(r); setRouteForm({ name: r.name, days: r.days, difficulty: r.difficulty, price: String(r.price), description: r.description || '', image: r.image || '' }); setRouteDialog(true); }}><EditIcon sx={{ fontSize: 16 }} /></IconButton>
+                    <IconButton size="small" onClick={() => deleteRoute(r.id)}><DeleteIcon sx={{ fontSize: 16, color: '#E05D3A' }} /></IconButton>
                   </Box>
                 </Box>
               </Paper>
             ))
           )}
+
+          <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => { setEditingRoute(null); setRouteForm({ name: '', days: 1, difficulty: 'Moderate', price: '', description: '', image: '' }); setRouteDialog(true); }} sx={{ mb: 3 }}>
+            Add Route
+          </Button>
+
+          <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, bgcolor: '#f0faf8' }}>
+            <Typography variant="body2" fontWeight={700} sx={{ color: '#2A9D8F' }} mb={0.5}>Getting Published</Typography>
+            <Typography variant="caption" color="text.secondary" display="block">
+              1. Complete your profile (bio, photo, pricing)
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block">
+              2. Add your routes with descriptions
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block">
+              3. Submit for review — an admin will publish you live
+            </Typography>
+          </Paper>
         </>
       )}
 
-      {tab === 'earnings' && (
+      {tab === 'routes' && (
         <>
-          <Paper elevation={0} sx={{ p: 2, mb: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, textAlign: 'center' }}>
-            <Typography variant="caption" color="text.secondary">Total Earnings</Typography>
-            <Typography variant="h1" sx={{ fontSize: 36, color: '#2A9D8F', my: 0.5 }}>${totalEarnings.toLocaleString()}</Typography>
-            <Typography variant="caption" color="text.secondary">
-              {guideEarnings.length} completed booking(s)
-            </Typography>
-          </Paper>
-
-          <Typography variant="h2" mb={1.5}>Payment History</Typography>
-          {guideEarnings.length === 0 ? (
+          {routes.length === 0 ? (
             <Paper elevation={0} sx={{ p: 3, textAlign: 'center', border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-              <Typography variant="body2" color="text.secondary">No earnings recorded yet</Typography>
+              <Typography variant="body2" color="text.secondary" mb={2}>No routes yet</Typography>
             </Paper>
           ) : (
-            guideEarnings.map((e, i) => (
-              <Paper key={i} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Box>
-                  <Typography variant="body2" fontWeight={700}>${e.amount.toLocaleString()}</Typography>
-                  <Typography variant="caption" color="text.secondary">{new Date(e.date).toLocaleDateString()}</Typography>
+            routes.map(r => (
+              <Paper key={r.id} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight={700}>{r.name}</Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">{r.days} day(s) · {r.difficulty} · ${r.price}/person</Typography>
+                    {r.description && <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.3 }}>{r.description}</Typography>}
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 0.3 }}>
+                    <IconButton size="small" onClick={() => { setEditingRoute(r); setRouteForm({ name: r.name, days: r.days, difficulty: r.difficulty, price: String(r.price), description: r.description || '', image: r.image || '' }); setRouteDialog(true); }}><EditIcon sx={{ fontSize: 16 }} /></IconButton>
+                    <IconButton size="small" onClick={() => deleteRoute(r.id)}><DeleteIcon sx={{ fontSize: 16, color: '#E05D3A' }} /></IconButton>
+                  </Box>
                 </Box>
-                <Chip label="Paid" size="small" color="success" sx={{ fontSize: 10 }} />
               </Paper>
             ))
           )}
-
-          <Paper elevation={0} sx={{ p: 2, mt: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, bgcolor: '#f0faf8' }}>
-            <Typography variant="body2" fontWeight={700} sx={{ color: '#2A9D8F' }} mb={0.5}>
-              How You Get Paid
-            </Typography>
-            <Typography variant="caption" color="text.secondary" display="block">
-              1. Traveler pays 20% deposit via Stripe (held by BLS as agent commission)
-            </Typography>
-            <Typography variant="caption" color="text.secondary" display="block">
-              2. You receive traveler's contact details
-            </Typography>
-            <Typography variant="caption" color="text.secondary" display="block">
-              3. Balance (80%) paid directly to you via Wise, bank transfer, or cash on arrival
-            </Typography>
-          </Paper>
+          <Button variant="contained" color="primary" size="small" startIcon={<AddIcon />} onClick={() => { setEditingRoute(null); setRouteForm({ name: '', days: 1, difficulty: 'Moderate', price: '', description: '', image: '' }); setRouteDialog(true); }}>
+            Add Route
+          </Button>
         </>
       )}
 
       {tab === 'profile' && (
-        <GuideProfileEdit guide={guide} user={user} />
+        <>
+          <Paper elevation={0} sx={{ p: 2, mb: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Typography variant="body2" fontWeight={700}>Public Profile</Typography>
+              <Button size="small" variant="text" onClick={() => setProfileOpen(true)}>Edit</Button>
+            </Box>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', fontSize: 13 }}>
+              <Typography variant="caption" color="text.secondary">Name:</Typography>
+              <Typography variant="caption">{guide?.trading_name || '—'}</Typography>
+              <Typography variant="caption" color="text.secondary">Location:</Typography>
+              <Typography variant="caption">{guide?.location || '—'}</Typography>
+              <Typography variant="caption" color="text.secondary">Price:</Typography>
+              <Typography variant="caption">{guide?.price ? `$${guide.price}/person` : '—'}</Typography>
+              <Typography variant="caption" color="text.secondary">Languages:</Typography>
+              <Typography variant="caption">{Array.isArray(guide?.languages) ? guide.languages.join(', ') : guide?.languages || '—'}</Typography>
+              <Typography variant="caption" color="text.secondary">Experience:</Typography>
+              <Typography variant="caption">{guide?.experience ? `${guide.experience} years` : '—'}</Typography>
+            </Box>
+            {guide?.bio && (
+              <>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1, fontWeight: 700 }}>Bio</Typography>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ whiteSpace: 'pre-wrap' }}>{guide.bio}</Typography>
+              </>
+            )}
+          </Paper>
+
+          {guide?.id && (
+            <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
+              <Typography variant="body2" fontWeight={700} mb={1}>Preview Your Profile</Typography>
+              <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+                Travelers will see your profile at:
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#2A9D8F' }}>
+                bucketlistspots.com/guide/{guide.id}
+              </Typography>
+              <Button size="small" variant="outlined" sx={{ mt: 1, fontSize: 12 }} onClick={() => window.open(`/guide/${guide.id}`, '_blank')}>
+                Open Preview
+              </Button>
+            </Paper>
+          )}
+        </>
       )}
 
-      <Dialog open={availOpen} onClose={() => setAvailOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Set Your Availability</DialogTitle>
+      {/* Profile Edit Dialog */}
+      <Dialog open={profileOpen} onClose={() => setProfileOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Edit Profile</DialogTitle>
         <DialogContent>
-          <TextField fullWidth multiline rows={3} value={availForm}
-            onChange={(e) => setAvailForm(e.target.value)}
-            placeholder="e.g., Available year-round. Best months: June-October, December-February. Limited availability in April-May (rainy season)."
-            sx={{ mt: 1 }} />
+          <TextField fullWidth label="Trading Name" value={profileForm.trading_name} onChange={e => setProfileForm({ ...profileForm, trading_name: e.target.value })} sx={{ mb: 2, mt: 1 }} />
+          <TextField fullWidth label="Location" value={profileForm.location} onChange={e => setProfileForm({ ...profileForm, location: e.target.value })} sx={{ mb: 2 }} placeholder="e.g. Moshi, Tanzania" />
+          <TextField fullWidth label="Starting Price ($)" type="number" value={profileForm.price} onChange={e => setProfileForm({ ...profileForm, price: e.target.value })} sx={{ mb: 2 }} />
+          <TextField fullWidth label="Languages (comma-separated)" value={profileForm.languages} onChange={e => setProfileForm({ ...profileForm, languages: e.target.value })} sx={{ mb: 2 }} placeholder="English, Swahili" />
+          <TextField fullWidth label="Years of Experience" type="number" value={profileForm.experience} onChange={e => setProfileForm({ ...profileForm, experience: e.target.value })} sx={{ mb: 2 }} />
+          <TextField fullWidth label="Bio" multiline rows={4} value={profileForm.bio} onChange={e => setProfileForm({ ...profileForm, bio: e.target.value })} placeholder="Tell travelers about yourself..." />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setAvailOpen(false)}>Cancel</Button>
-          <Button variant="contained" color="primary" onClick={handleSaveAvailability}>Save</Button>
+          <Button onClick={() => setProfileOpen(false)}>Cancel</Button>
+          <Button variant="contained" color="primary" onClick={saveProfile} disabled={saving}>
+            {saving ? <CircularProgress size={20} /> : 'Save'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Route Edit Dialog */}
+      <Dialog open={routeDialog} onClose={() => setRouteDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingRoute ? 'Edit Route' : 'Add Route'}</DialogTitle>
+        <DialogContent>
+          <TextField fullWidth label="Route Name" value={routeForm.name} onChange={e => setRouteForm({ ...routeForm, name: e.target.value })} required sx={{ mb: 2, mt: 1 }} placeholder="e.g. Machame Route" />
+          <TextField fullWidth label="Days" type="number" value={routeForm.days} onChange={e => setRouteForm({ ...routeForm, days: e.target.value })} sx={{ mb: 2 }} />
+          <TextField select fullWidth label="Difficulty" value={routeForm.difficulty} onChange={e => setRouteForm({ ...routeForm, difficulty: e.target.value })} sx={{ mb: 2 }}>
+            {difficulties.map(d => <MenuItem key={d} value={d}>{d}</MenuItem>)}
+          </TextField>
+          <TextField fullWidth label="Price per Person ($)" type="number" value={routeForm.price} onChange={e => setRouteForm({ ...routeForm, price: e.target.value })} required sx={{ mb: 2 }} />
+          <TextField fullWidth label="Description" multiline rows={2} value={routeForm.description} onChange={e => setRouteForm({ ...routeForm, description: e.target.value })} sx={{ mb: 2 }} placeholder="Brief description of the route..." />
+          <TextField fullWidth label="Image URL (optional)" value={routeForm.image} onChange={e => setRouteForm({ ...routeForm, image: e.target.value })} placeholder="https://..." />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setRouteDialog(false)}>Cancel</Button>
+          <Button variant="contained" color="primary" onClick={saveRoute} disabled={saving || !routeForm.name || !routeForm.price}>
+            {saving ? <CircularProgress size={20} /> : editingRoute ? 'Update' : 'Add Route'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Container>
-  );
-}
-
-function GuideProfileEdit({ guide, user }) {
-  const { updateProfile } = useAuth();
-  const [bio, setBio] = useState(guide?.bio?.split('\n')[0] || '');
-  const [price, setPrice] = useState(guide?.price || 1900);
-
-  const handleSave = () => {
-    updateProfile({ bio, price: Number(price) });
-  };
-
-  return (
-    <>
-      <Typography variant="h2" mb={1.5}>Public Profile</Typography>
-      <Paper elevation={0} sx={{ p: 2, mb: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
-          <Avatar src={guide?.photo} sx={{ width: 64, height: 64 }} />
-          <Box>
-            <Typography variant="body1" fontWeight={700}>{user?.name || guide?.name}</Typography>
-            <Typography variant="caption" color="text.secondary">{guide?.tradingName}</Typography>
-          </Box>
-        </Box>
-        <TextField fullWidth label="Short Bio" multiline rows={2} value={bio} onChange={(e) => setBio(e.target.value)} sx={{ mb: 2 }} />
-        <TextField fullWidth label="Starting Price ($)" type="number" value={price} onChange={(e) => setPrice(e.target.value)} sx={{ mb: 2 }} />
-        <Button variant="contained" color="primary" onClick={handleSave}>Save Profile</Button>
-      </Paper>
-
-      <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-        <Typography variant="body2" fontWeight={700} mb={1}>Routes You Offer</Typography>
-        {guide?.routes?.map((r, i) => (
-          <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.8, borderBottom: i < guide.routes.length - 1 ? '1px solid rgba(16,42,67,0.06)' : 'none' }}>
-            <Typography variant="body2">{r.name}</Typography>
-            <Typography variant="body2" fontWeight={700}>${r.price}/person</Typography>
-          </Box>
-        ))}
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          Contact BLS admin to update your routes.
-        </Typography>
-      </Paper>
-    </>
   );
 }

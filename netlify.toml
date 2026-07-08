@@ -18,6 +18,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/guide-profile/*"
+  to = "/.netlify/functions/guide-profile"
+  status = 200
+
+[[redirects]]
+  from = "/api/guide-profile"
+  to = "/.netlify/functions/guide-profile"
+  status = 200
+
+[[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
   status = 200
