@@ -8,7 +8,7 @@ exports.handler = async (event) => {
 
   try {
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-    const { routeName, guideName, guideId, price, travelers, depositAmount, guestName, guestEmail, date } = JSON.parse(event.body);
+    const { routeName, guideName, guideId, price, travelers, depositAmount, guestName, guestEmail, date, currency } = JSON.parse(event.body);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
 
     const session = await stripe.checkout.sessions.create({
@@ -17,7 +17,7 @@ exports.handler = async (event) => {
       customer_email: guestEmail,
       line_items: [{
         price_data: {
-          currency: 'usd',
+          currency: currency || 'usd',
           product_data: {
             name: `${routeName} with ${guideName}`,
             description: `${travelers} traveler(s) · ${date} · 20% deposit`,

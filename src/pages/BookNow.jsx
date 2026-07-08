@@ -6,6 +6,7 @@ import {
 import SearchBar from '../components/SearchBar';
 import GuideCard from '../components/GuideCard';
 import { fetchGuides } from '../lib/api';
+import { formatPrice, getStoredCurrency } from '../lib/currency';
 
 const vibes = ['Relaxed/Fun', 'Strict/Pro', 'Photographer-friendly'];
 
@@ -18,6 +19,7 @@ export default function BookNow() {
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [selectedVibes, setSelectedVibes] = useState([]);
   const [maxPrice, setMaxPrice] = useState(5000);
+  const currency = getStoredCurrency();
   const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
@@ -86,7 +88,7 @@ export default function BookNow() {
             ))}
           </Box>
           <Typography variant="caption" fontWeight={700} gutterBottom display="block">
-            Max Price: ${maxPrice.toLocaleString()}
+            Max Price: {formatPrice(maxPrice, currency)}
           </Typography>
           <Slider
             value={maxPrice}

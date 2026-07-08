@@ -5,10 +5,12 @@ import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { useAuth } from '../context/AuthContext';
+import { formatPrice, getStoredCurrency } from '../lib/currency';
 
 export default function ExperienceCard({ experience }) {
   const navigate = useNavigate();
   const { isExperienceSaved, toggleSavedExperience } = useAuth();
+  const currency = getStoredCurrency();
   const saved = isExperienceSaved(experience.id);
 
   return (
@@ -52,7 +54,7 @@ export default function ExperienceCard({ experience }) {
 
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5, mt: 1.5 }}>
           <Typography variant="body1" fontWeight={800}>
-            {experience.currency}{experience.price.toLocaleString()}
+            {formatPrice(experience.price, currency)}
           </Typography>
           <Typography variant="caption" color="text.secondary">/ person</Typography>
         </Box>

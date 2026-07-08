@@ -11,6 +11,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import IconButton from '@mui/material/IconButton';
 import { fetchGuideById } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { formatPrice, getStoredCurrency, setStoredCurrency, stripeCurrency } from '../lib/currency';
 
 const paymentMethods = [
   { id: 'stripe', label: 'Credit/Debit Card (Stripe)', icon: PaymentIcon, desc: 'Secure 3D Secure checkout' },
@@ -61,8 +62,9 @@ export default function Checkout() {
   const [email, setEmail] = useState(user?.email || '');
   const [phone, setPhone] = useState('');
   const [confirmed, setConfirmed] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('stripe');
-  const [processing, setProcessing] = useState(false);
+const [paymentMethod, setPaymentMethod] = useState('stripe');
+const [processing, setProcessing] = useState(false);
+const [currency, setCurrency] = useState(getStoredCurrency);
 
   if (loading) {
     return (
@@ -87,6 +89,8 @@ export default function Checkout() {
   const balanceAmount = routePrice - depositAmount;
   const totalTrip = routePrice * travelers;
   const totalDeposit = depositAmount * travelers;
+
+  const handleCurrencyChange = (c) => { setCurrency(c); setStoredCurrency(c); };
 
   const handleBook = async () => {
     if (!isLoggedIn) {
@@ -130,6 +134,7 @@ export default function Checkout() {
           guestName: name,
           guestEmail: email,
           date,
+          currency: stripeCurrency(currency),
         }),
       });
       const data = await res.json();
@@ -154,13 +159,13 @@ export default function Checkout() {
           </Box>
           <Typography variant="h2" sx={{ color: '#2A9D8F', mb: 1 }}>Booking Confirmed!</Typography>
           <Typography variant="body2" color="text.secondary" mb={3}>
-            Your deposit of <strong>${totalDeposit.toLocaleString()}</strong> has been received. {guide.name} will confirm your dates within 24 hours.
+            Your deposit of <strong>{formatPrice(totalDeposit, currency)}</strong> has been received. {guide.name} will confirm your dates within 24 hours.
           </Typography>
 
           <Alert severity="success" sx={{ mb: 2, borderRadius: 2, textAlign: 'left' }}>
             <Typography variant="caption" fontWeight={700}>Payment Receipt</Typography>
             <Typography variant="caption" display="block">Paid via: {paymentMethods.find(p => p.id === paymentMethod)?.label || 'Card'}</Typography>
-            <Typography variant="caption" display="block">Amount: ${totalDeposit.toLocaleString()}</Typography>
+            <Typography variant="caption" display="block">Amount: {formatPrice(totalDeposit, currency)}</Typography>
             <Typography variant="caption" display="block">Booking ref: {Date.now().toString(36).toUpperCase()}</Typography>
           </Alert>
 
@@ -168,7 +173,7 @@ export default function Checkout() {
             <Typography variant="caption" fontWeight={700}>Next Steps:</Typography>
             <Typography variant="caption" display="block">1. Check your email for booking confirmation and receipt.</Typography>
             <Typography variant="caption" display="block">2. {guide.name} will reach out via WhatsApp or email within 24 hours.</Typography>
-            <Typography variant="caption" display="block">3. Pay the balance of <strong>${(balanceAmount * travelers).toLocaleString()}</strong> directly to {guide.name} before the trip (via Wise, bank transfer, or cash on arrival).</Typography>
+            <Typography variant="caption" display="block">3. Pay the balance of <strong>{formatPrice(balanceAmount * travelers, currency)}</strong> directly to {guide.name} before the trip (via Wise, bank transfer, or cash on arrival).</Typography>
           </Alert>
 
           <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
@@ -214,7 +219,7 @@ export default function Checkout() {
           >
             {guide.routes.map(r => (
               <MenuItem key={r.name} value={r.name}>
-                {r.name} — {r.days} days — ${r.price.toLocaleString()}/person
+                {r.name} — {r.days} days — {formatPrice(r.price, currency)}/person
               </MenuItem>
             ))}
           </TextField>
@@ -274,17 +279,30 @@ export default function Checkout() {
             <Divider sx={{ my: 1.5 }} />
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
               <Typography variant="body2" fontWeight={700}>Total Trip</Typography>
-              <Typography variant="body2" fontWeight={800}>${totalTrip.toLocaleString()}</Typography>
+              <Typography variant="body2" fontWeight={800}>{formatPrice(totalTrip, currency)}</Typography>
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
               <Typography variant="caption" color="text.secondary">Deposit Due Now (20%)</Typography>
-              <Typography variant="caption" fontWeight={700} sx={{ color: '#E05D3A' }}>${totalDeposit.toLocaleString()}</Typography>
+              <Typography variant="caption" fontWeight={700} sx={{ color: '#E05D3A' }}>{formatPrice(totalDeposit, currency)}</Typography>
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
               <Typography variant="caption" color="text.secondary">Pay {guide.name} Directly Later (80%)</Typography>
-              <Typography variant="caption" fontWeight={600}>${(balanceAmount * travelers).toLocaleString()}</Typography>
+              <Typography variant="caption" fontWeight={600}>{formatPrice(balanceAmount * travelers, currency)}</Typography>
             </Box>
           </Paper>
+
+          <Typography variant="caption" fontWeight={700} gutterBottom display="block">
+            Pay in
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+            {['usd', 'gbp', 'eur'].map(c => (
+              <Button key={c} size="small" variant={currency === c ? 'contained' : 'outlined'}
+                onClick={() => handleCurrencyChange(c)}
+                sx={{ minWidth: 64, minHeight: 40, fontSize: 13, fontWeight: 700 }}>
+                {c === 'usd' ? '$ USD' : c === 'gbp' ? '£ GBP' : '€ EUR'}
+              </Button>
+            ))}
+          </Box>
 
           <Typography variant="caption" fontWeight={700} gutterBottom display="block">
             Payment Method
@@ -337,7 +355,7 @@ export default function Checkout() {
               disabled={!confirmed || processing}
               sx={{ flex: 2 }}
             >
-              {processing ? 'Processing...' : `Pay Deposit $${totalDeposit.toLocaleString()}`}
+              {processing ? 'Processing...' : `Pay Deposit ${formatPrice(totalDeposit, currency)}`}
             </Button>
           </Box>
         </Box>

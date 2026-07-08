@@ -15,6 +15,7 @@ import TrustBadge from '../components/TrustBadge';
 import ImpactCalculator from '../components/ImpactCalculator';
 import { fetchGuideById } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { formatPrice, getStoredCurrency } from '../lib/currency';
 
 export default function GuideProfile() {
   const { id } = useParams();
@@ -47,6 +48,7 @@ export default function GuideProfile() {
   }
 
   const saved = isGuideSaved(guide.id);
+  const currency = getStoredCurrency();
 
   return (
     <Box>
@@ -113,14 +115,14 @@ export default function GuideProfile() {
             fullWidth
             onClick={() => navigate(`/checkout/${guide.id}`)}
           >
-            Book {guide.priceCurrency}{guide.price.toLocaleString()}
+            Book {formatPrice(guide.price, currency)}
           </Button>
           <Button variant="outlined" size="large" sx={{ minWidth: 48, px: 2 }}>
             Message
           </Button>
         </Box>
 
-        <ImpactCalculator guidePrice={guide.price} agencyPrice={guide.agencyPrice} currency={guide.priceCurrency} />
+        <ImpactCalculator guidePrice={guide.price} agencyPrice={guide.agencyPrice} />
 
         <Paper elevation={0} sx={{ p: 2, mt: 2, border: '1px solid rgba(16,42,67,0.08)' }}>
           <Typography variant="body2" fontWeight={700} mb={1}>My Story</Typography>
@@ -155,7 +157,7 @@ export default function GuideProfile() {
               </Box>
               <Box sx={{ textAlign: 'right' }}>
                 <Typography variant="body2" fontWeight={700}>
-                  {guide.priceCurrency}{route.price.toLocaleString()}
+                  {formatPrice(route.price, currency)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">/ person</Typography>
               </Box>
