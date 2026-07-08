@@ -36,7 +36,13 @@ exports.handler = async (event) => {
       if (type === 'all' || type === 'ambassador') {
         results = results.concat(await fetchTable('ambassador_applications', 'ambassador'));
       }
-      results.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      if (type === 'all' || type === 'pending-guides') {
+        const { data, error } = await supabase.from('guides').select('*').eq('status', 'pending').order('updated_at', { ascending: false });
+        if (!error) {
+          results = results.concat((data || []).map(r => ({ ...r, _type: 'pending-guide' })));
+        }
+      }
+      results.sort((a, b) => new Date(b.created_at || b.updated_at) - new Date(a.created_at || a.updated_at));
       return { statusCode: 200, headers, body: JSON.stringify(results) };
     } catch (err) {
       return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) };
@@ -45,8 +51,19 @@ exports.handler = async (event) => {
 
   if (event.httpMethod === 'PATCH') {
     const { id, status, type } = JSON.parse(event.body);
-    if (!id || !['pending', 'approved', 'rejected'].includes(status)) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid id or status' }) };
+    if (!id) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing id' }) };
+
+    if (type === 'pending-guide') {
+      if (!['published', 'draft'].includes(status)) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid status for guide' }) };
+      }
+      const { data, error } = await supabase.from('guides').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+      if (error) return { statusCode: 500, headers, body: JSON.stringify({ error: error.message }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ ...data, _type: 'pending-guide' }) };
+    }
+
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid status' }) };
     }
     const table = type === 'ambassador' ? 'ambassador_applications' : 'guide_applications';
     const { data, error } = await supabase.from(table).update({ status }).eq('id', id).select().single();
