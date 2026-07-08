@@ -7,6 +7,7 @@ import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import RateReviewIcon from '@mui/icons-material/RateReview';
+import Logo from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
 import { getStoredCurrency, setStoredCurrency } from '../lib/currency';
 import { useState } from 'react';
@@ -58,7 +59,9 @@ export default function MainLayout() {
 
   return (
     <Box sx={{ pb: '72px', minHeight: '100vh', bgcolor: 'background.default' }}>
-      <Box sx={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1200, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', p: 1.5, gap: 0.5 }}>
+      <Box sx={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1200, display: 'flex', justifyContent: 'space-between', alignItems: 'center', px: 1.5, py: 0.8 }}>
+        <Logo size="small" onClick={() => navigate('/')} />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
         {['usd', 'gbp', 'eur'].map(c => (
           <IconButton key={c} size="small" onClick={() => { setCurrency(c); setStoredCurrency(c); window.location.reload(); }}
             sx={{ fontSize: 11, fontWeight: 700, bgcolor: currency === c ? '#2A9D8F' : 'rgba(255,255,255,0.9)', color: currency === c ? '#FFF' : '#102A43', width: 36, height: 36, backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
@@ -80,6 +83,7 @@ export default function MainLayout() {
             </IconButton>
           </>
         )}
+        </Box>
       </Box>
       <Box sx={{ pt: '52px' }}>
         <Outlet />
