@@ -58,27 +58,25 @@ export default function MainLayout() {
 
   return (
     <Box sx={{ pb: '72px', minHeight: '100vh', bgcolor: 'background.default' }}>
-      {isLoggedIn && (
-        <Box sx={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1200, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', p: 1.5, gap: 0.5 }}>
-          {['usd', 'gbp', 'eur'].map(c => (
-            <IconButton key={c} size="small" onClick={() => { setCurrency(c); setStoredCurrency(c); window.location.reload(); }}
-              sx={{ fontSize: 11, fontWeight: 700, bgcolor: currency === c ? '#2A9D8F' : 'rgba(255,255,255,0.9)', color: currency === c ? '#FFF' : '#102A43', width: 36, height: 36, backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-              {c === 'usd' ? '$' : c === 'gbp' ? '£' : '€'}
+      <Box sx={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1200, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', p: 1.5, gap: 0.5 }}>
+        {['usd', 'gbp', 'eur'].map(c => (
+          <IconButton key={c} size="small" onClick={() => { setCurrency(c); setStoredCurrency(c); window.location.reload(); }}
+            sx={{ fontSize: 11, fontWeight: 700, bgcolor: currency === c ? '#2A9D8F' : 'rgba(255,255,255,0.9)', color: currency === c ? '#FFF' : '#102A43', width: 36, height: 36, backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+            {c === 'usd' ? '$' : c === 'gbp' ? '£' : '€'}
+          </IconButton>
+        ))}
+        {isLoggedIn && (
+          <>
+            <IconButton size="small" onClick={() => navigate(getDashboardLink())} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+              <DashboardIcon sx={{ fontSize: 20, color: '#102A43' }} />
             </IconButton>
-          ))}
-          {isLoggedIn && (
-            <>
-              <IconButton size="small" onClick={() => navigate(getDashboardLink())} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-                <DashboardIcon sx={{ fontSize: 20, color: '#102A43' }} />
-              </IconButton>
-              <IconButton size="small" onClick={() => { logout(); navigate('/'); }} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-                <LogoutIcon sx={{ fontSize: 20, color: '#E05D3A' }} />
-              </IconButton>
-            </>
-          )}
-        </Box>
-      )}
-      <Box sx={{ pt: isLoggedIn ? '52px' : 0 }}>
+            <IconButton size="small" onClick={() => { logout(); navigate('/'); }} sx={{ bgcolor: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+              <LogoutIcon sx={{ fontSize: 20, color: '#E05D3A' }} />
+            </IconButton>
+          </>
+        )}
+      </Box>
+      <Box sx={{ pt: '52px' }}>
         <Outlet />
       </Box>
       <Paper sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100 }} elevation={0}>
