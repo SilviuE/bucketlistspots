@@ -12,6 +12,7 @@ import TravellerDashboard from './pages/TravellerDashboard';
 import GuideDashboard from './pages/GuideDashboard';
 import AmbassadorDashboard from './pages/AmbassadorDashboard';
 import BecomeGuide from './pages/BecomeGuide';
+import BecomeAmbassador from './pages/BecomeAmbassador';
 import AdminApplications from './pages/AdminApplications';
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/trust" element={<TrustHub />} />
         <Route path="/guides" element={<ForGuides />} />
         <Route path="/become-a-guide" element={<BecomeGuide />} />
+        <Route path="/ambassador" element={<BecomeAmbassador />} />
         <Route path="/admin/applications" element={<AdminApplications />} />
         <Route path="/guide/:id" element={<GuideProfile />} />
         <Route path="/checkout/:guideId" element={<Checkout />} />
