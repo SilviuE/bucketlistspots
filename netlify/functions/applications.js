@@ -20,17 +20,36 @@ exports.handler = async (event) => {
   }
 
   if (event.httpMethod === 'GET') {
-    const { data, error } = await supabase.from('guide_applications').select('*').order('created_at', { ascending: false });
-    if (error) return { statusCode: 500, headers, body: JSON.stringify({ error: error.message }) };
-    return { statusCode: 200, headers, body: JSON.stringify(data) };
+    const type = new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
+
+    const fetchTable = async (table, typeLabel) => {
+      const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []).map(r => ({ ...r, _type: typeLabel }));
+    };
+
+    try {
+      let results = [];
+      if (type === 'all' || type === 'guide') {
+        results = results.concat(await fetchTable('guide_applications', 'guide'));
+      }
+      if (type === 'all' || type === 'ambassador') {
+        results = results.concat(await fetchTable('ambassador_applications', 'ambassador'));
+      }
+      results.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      return { statusCode: 200, headers, body: JSON.stringify(results) };
+    } catch (err) {
+      return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) };
+    }
   }
 
   if (event.httpMethod === 'PATCH') {
-    const { id, status } = JSON.parse(event.body);
+    const { id, status, type } = JSON.parse(event.body);
     if (!id || !['pending', 'approved', 'rejected'].includes(status)) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid id or status' }) };
     }
-    const { data, error } = await supabase.from('guide_applications').update({ status }).eq('id', id).select().single();
+    const table = type === 'ambassador' ? 'ambassador_applications' : 'guide_applications';
+    const { data, error } = await supabase.from(table).update({ status }).eq('id', id).select().single();
     if (error) return { statusCode: 500, headers, body: JSON.stringify({ error: error.message }) };
     return { statusCode: 200, headers, body: JSON.stringify(data) };
   }
