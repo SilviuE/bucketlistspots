@@ -88,6 +88,16 @@ export default function MainLayout() {
       <Box sx={{ pt: '52px' }}>
         <Outlet />
       </Box>
+      <Box sx={{ textAlign: 'center', py: 2, px: 2 }}>
+        <Typography variant="caption" color="text.disabled" display="block" mb={0.5}>
+          &copy; {new Date().getFullYear()} BucketListSpots Ltd &middot; Company No. 16595661
+        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1.5 }}>
+          <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/terms">Terms</Typography>
+          <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/privacy">Privacy</Typography>
+          <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="mailto:hello@bucketlistspots.com">Contact</Typography>
+        </Box>
+      </Box>
       <Paper sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100 }} elevation={0}>
         <BottomNavigation value={currentValue} onChange={(_, val) => navigate(val)} showLabels>
           {navItems.map(item => (

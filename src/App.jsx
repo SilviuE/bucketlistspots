@@ -14,6 +14,8 @@ import AmbassadorDashboard from './pages/AmbassadorDashboard';
 import BecomeGuide from './pages/BecomeGuide';
 import BecomeAmbassador from './pages/BecomeAmbassador';
 import AdminApplications from './pages/AdminApplications';
+import Terms from './pages/Terms';
+import Privacy from './pages/Privacy';
 
 export default function App() {
   return (
@@ -33,6 +35,8 @@ export default function App() {
         <Route path="/dashboard" element={<TravellerDashboard />} />
         <Route path="/guide-dashboard" element={<GuideDashboard />} />
         <Route path="/ambassador-dashboard" element={<AmbassadorDashboard />} />
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/privacy" element={<Privacy />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
