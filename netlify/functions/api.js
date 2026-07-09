@@ -171,7 +171,8 @@ async function handleApplications(event) {
 
   const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
   const { data: userRecord } = await supabase.from('users').select('role').eq('id', decoded.id).maybeSingle();
-  if (!userRecord || userRecord.role !== 'admin') return json({ error: 'Forbidden: admin access required' }, 403);
+  const adminRole = userRecord?.role || decoded.role;
+  if (adminRole !== 'admin') return json({ error: `Forbidden: admin access required (role: "${adminRole}")` }, 403);
 
   if (event.httpMethod === 'GET') {
     const type = new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
