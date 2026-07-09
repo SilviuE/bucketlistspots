@@ -326,27 +326,31 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    // Debug: check if user.id matches existing.user_id
+    // Debug: check all IDs
     const jwtUser = jwtDecode(token);
-    const subMatch = jwtUser.sub === existing.user_id;
     const subVal = jwtUser.sub;
     const eUserId = existing.user_id;
+    const authUserId = user.id;
+    const subMatchExisting = subVal === eUserId;
+    const authMatchExisting = authUserId === eUserId;
+    const subAuthMatch = subVal === authUserId;
     const { count: countById } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('id', existing.id);
-    const { count: countByUserId } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', user.id);
+    const { count: countByUserId } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', subVal);
+    const { count: countByAuthUserId } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', authUserId);
     // Direct SQL via raw fetch with service role
     const srp = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const su = process.env.VITE_SUPABASE_URL;
     const body = JSON.stringify({ status: 'pending', updated_at: new Date().toISOString() });
-    const patchRes = await fetch(`${su}/rest/v1/guides?id=eq.${encodeURIComponent(existing.id)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+    const patchRes = await fetch(`${su}/rest/v1/guides?id=eq.${encodeURIComponent(existing.id)}`, {
       method: 'PATCH',
       headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
       body,
     });
     const patchStatus = patchRes.status;
     const patchText = await patchRes.text();
-    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('id', existing.id).maybeSingle();
     if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { subMatch, subVal, eUserId, countById, countByUserId, patchStatus, patchText: patchText.slice(0, 200), dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { subVal, eUserId, authUserId, subMatchExisting, authMatchExisting, subAuthMatch, countById, countByUserId, countByAuthUserId, patchStatus, patchText: patchText.slice(0, 200), dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
