@@ -326,16 +326,11 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    const srp = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const supabaseUrl = process.env.VITE_SUPABASE_URL;
-    const updRes = await fetch(`${supabaseUrl}/rest/v1/guides?id=eq.${existing.id}`, {
-      method: 'PATCH',
-      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-      body: JSON.stringify({ status: 'pending', updated_at: new Date().toISOString() }),
-    });
-    if (!updRes.ok) { const t = await updRes.text(); return json({ error: 'update failed', debug: t }, 500); }
-    const [data] = await updRes.json();
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: data || 'no data returned' }, 500);
+    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', existing.id);
+    if (updErr) return json({ error: updErr.message, debug: 'sr-update-failed' }, 500);
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('id', existing.id).maybeSingle();
+    if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { fetchedId: existing.id, currentStatus: data?.status, dataKeys: data ? Object.keys(data) : null } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
