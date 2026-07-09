@@ -18,7 +18,7 @@ function reqBody(event) {
 }
 
 async function authUser(event) {
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
   const authHeader = event.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '');
   const { data: { user }, error } = await supabase.auth.getUser(token);
@@ -68,7 +68,7 @@ async function handleApplyGuide(event) {
       return json({ error: 'Missing required fields' }, 400);
     }
 
-    const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+    const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
     const { error: dbError } = await supabase.from('guide_applications').insert({
       full_name: fullName, email, phone, country,
       experience: parseInt(experience) || 0, languages, specialties,
@@ -113,7 +113,7 @@ async function handleApplyAmbassador(event) {
       return json({ error: 'Missing required fields' }, 400);
     }
 
-    const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+    const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
     const { error: dbError } = await supabase.from('ambassador_applications').insert({
       full_name: fullName, email, phone, country, platform, handle,
       followers: parseInt(followers) || 0, niche, why_you: whyYou,
