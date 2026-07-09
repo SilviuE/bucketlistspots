@@ -326,10 +326,13 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    const { error: updateErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
-    if (updateErr) return json({ error: updateErr.message }, 500);
+    const updRes = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
+    if (updRes.error) return json({ error: updRes.error.message, debug: 'update-failed' }, 500);
+    // Verify the update worked
+    const { data: check } = await sr.from('guides').select('status,updated_at').eq('user_id', user.id).maybeSingle();
+    if (check && check.status !== 'pending') return json({ error: 'Status not updated', debug: check }, 500);
     const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (fetchErr) return json({ error: fetchErr.message }, 500);
+    if (fetchErr) return json({ error: fetchErr.message, debug: 'fetch-failed' }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
