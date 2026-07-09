@@ -268,7 +268,7 @@ async function handleGuideProfile(event) {
   // POST /routes — add a route
   if (method === 'POST' && path[0] === 'routes') {
     const body = reqBody(event);
-    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).single();
+    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
 
     const routes = guide.routes || [];
@@ -282,7 +282,7 @@ async function handleGuideProfile(event) {
       image: body.image || '',
     });
 
-    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().single();
+    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
@@ -291,11 +291,11 @@ async function handleGuideProfile(event) {
   if (method === 'PUT' && path[0] === 'routes' && path[1]) {
     const routeId = path[1];
     const body = reqBody(event);
-    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).single();
+    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
 
     const routes = (guide.routes || []).map(r => r.id === routeId ? { ...r, ...body, id: routeId } : r);
-    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().single();
+    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
@@ -303,22 +303,22 @@ async function handleGuideProfile(event) {
   // DELETE /routes/:id — delete a route
   if (method === 'DELETE' && path[0] === 'routes' && path[1]) {
     const routeId = path[1];
-    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).single();
+    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
 
     const routes = (guide.routes || []).filter(r => r.id !== routeId);
-    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().single();
+    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
 
   // POST /submit — submit for admin review
   if (method === 'POST' && path[0] === 'submit') {
-    const { data: guide } = await supabase.from('guides').select('*').eq('user_id', user.id).single();
+    const { data: guide } = await supabase.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
     if (guide.status === 'published') return json({ error: 'Already published' }, 400);
 
-    const { data, error } = await supabase.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id).select().single();
+    const { data, error } = await supabase.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
 
     if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {

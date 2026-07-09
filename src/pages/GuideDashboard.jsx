@@ -86,8 +86,8 @@ export default function GuideDashboard() {
         }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Save failed');
+        const txt = await res.text();
+        throw new Error(txt || 'Save failed');
       }
       const data = await res.json();
       setGuide(data);
@@ -108,7 +108,10 @@ export default function GuideDashboard() {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).error || 'Submit failed');
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || 'Submit failed');
+      }
       const data = await res.json();
       setGuide(data);
     } catch (err) {
@@ -143,7 +146,10 @@ export default function GuideDashboard() {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error('Save failed');
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || 'Save failed');
+      }
       const data = await res.json();
       setGuide(data);
       setRouteDialog(false);
@@ -165,7 +171,10 @@ export default function GuideDashboard() {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
-      if (!res.ok) throw new Error('Delete failed');
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || 'Delete failed');
+      }
       const data = await res.json();
       setGuide(data);
     } catch (err) {
