@@ -31,7 +31,7 @@ function mapDestination(d) {
 }
 
 export async function fetchGuides() {
-  const { data, error } = await supabase.from('guides').select('*');
+  const { data, error } = await supabase.from('guides').select('*').order('featured', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false });
   if (error) throw error;
   return (data || []).map(mapGuide);
 }
