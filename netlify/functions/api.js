@@ -221,7 +221,7 @@ async function handleGuideProfile(event) {
 
   const method = event.httpMethod;
   const rawPath = event.path || '';
-  const path = rawPath.replace(/^.*\/guide-profile\/?/, '').split('/').filter(Boolean);
+  const path = rawPath.replace(/^.*?\/guide-profile\/?/, '').split('/').filter(Boolean);
 
   // GET — fetch my profile + routes
   if (method === 'GET') {
@@ -345,7 +345,9 @@ async function handleGuideProfile(event) {
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json({ ok: true });
 
-  const parts = event.path.replace(/^.*\/functions\/api\/?/i, '').split('/').filter(Boolean);
+  // event.path can be either the original (/api/...) or the function URL (/.netlify/functions/api/...)
+  const p = event.path.replace(/^.*?\/functions\/api\/?/i, '');
+  const parts = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);
   const route = parts[0] || '';
 
   switch (route) {
