@@ -391,7 +391,7 @@ export default function GuideDashboard() {
           <TextField fullWidth label="Starting Price ($)" type="number" value={profileForm.price} onChange={e => setProfileForm({ ...profileForm, price: e.target.value })} sx={{ mb: 2 }} />
           <TextField fullWidth label="Languages (comma-separated)" value={profileForm.languages} onChange={e => setProfileForm({ ...profileForm, languages: e.target.value })} sx={{ mb: 2 }} placeholder="English, Swahili" />
           <TextField fullWidth label="Years of Experience" type="number" value={profileForm.experience} onChange={e => setProfileForm({ ...profileForm, experience: e.target.value })} sx={{ mb: 2 }} />
-          <TextField fullWidth label="Bio" multiline rows={4} value={profileForm.bio} onChange={e => setProfileForm({ ...profileForm, bio: e.target.value })} placeholder="Tell travelers about yourself..." />
+          <TextField fullWidth label="Bio" multiline rows={4} value={profileForm.bio} onChange={e => setProfileForm({ ...profileForm, bio: e.target.value })} placeholder="Tell travelers about yourself..." inputProps={{ maxLength: 600 }} helperText={`${profileForm.bio.length}/600`} />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setProfileOpen(false)}>Cancel</Button>
