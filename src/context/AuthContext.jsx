@@ -91,6 +91,11 @@ export function AuthProvider({ children }) {
       .single();
 
     if (profile) {
+      const role = userData.role || 'traveller';
+      if (profile.role !== role) {
+        await supabase.from('users').update({ role }).eq('id', authData.user.id);
+        profile.role = role;
+      }
       setUser(profile);
       save('bls_user', profile);
     }
@@ -105,6 +110,8 @@ export function AuthProvider({ children }) {
     if (authError) return { error: authError.message };
     if (!authData.user) return { error: 'Login failed' };
 
+    const role = authData.user.user_metadata?.role || authData.user.app_metadata?.role || 'traveller';
+
     const { data: profile } = await supabase
       .from('users')
       .select('*')
@@ -112,6 +119,10 @@ export function AuthProvider({ children }) {
       .single();
 
     if (profile) {
+      if (profile.role !== role) {
+        await supabase.from('users').update({ role }).eq('id', authData.user.id);
+        profile.role = role;
+      }
       setUser(profile);
       save('bls_user', profile);
     }
