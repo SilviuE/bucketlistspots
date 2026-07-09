@@ -307,6 +307,7 @@ async function handleGuideProfile(event) {
       updates.user_id = user.id;
       updates.status = 'draft';
       updates.id = user.id.replace(/-/g, '').slice(0, 12);
+      updates.name = updates.trading_name || user.email?.split('@')[0] || 'Guide';
       // Try user JWT first; if RLS blocks, fall back to service role key
       const { data, error } = await insertRow(updates);
       if (error && error.message.includes('row-level security')) {
