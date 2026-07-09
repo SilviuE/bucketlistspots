@@ -14,6 +14,7 @@ import SchoolIcon from '@mui/icons-material/School';
 import YouTubeIcon from '@mui/icons-material/YouTube';
 import InstagramIcon from '@mui/icons-material/Instagram';
 import LanguageIcon from '@mui/icons-material/Language';
+import UpdateFeed from '../components/UpdateFeed';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import { useAuth } from '../context/AuthContext';
 
@@ -41,6 +42,7 @@ export default function AmbassadorDashboard() {
     { key: 'overview', label: 'Overview' },
     { key: 'scouts', label: 'My Scouts' },
     { key: 'commissions', label: 'Commissions' },
+    { key: 'updates', label: 'Updates' },
     { key: 'content', label: 'Content' },
   ];
 
@@ -210,6 +212,13 @@ export default function AmbassadorDashboard() {
             <Typography variant="caption" color="text.secondary" display="block">• Payouts processed monthly via Wise or bank transfer</Typography>
           </Paper>
         </>
+      )}
+
+      {tab === 'updates' && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h2" mb={1.5}>Your Updates</Typography>
+          <UpdateFeed userId={user?.id} showCreate />
+        </Box>
       )}
 
       {tab === 'content' && (

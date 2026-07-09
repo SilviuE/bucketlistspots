@@ -378,6 +378,66 @@ async function handleDebugAuth(event) {
   return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertTest: 'OK' });
 }
 
+// ─── Posts / News ─────────────────────────────────────────────────────
+async function handlePosts(event) {
+  const authHeader = event.headers.authorization || '';
+  const token = authHeader.replace('Bearer ', '');
+  const user = jwtDecode(token);
+  const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+  const url = new URL(event.url, 'http://localhost');
+  const method = event.httpMethod;
+  const path = url.pathname.replace(/^.*?\/api\/posts\/?/, '').split('/').filter(Boolean);
+  const postId = path[0];
+
+  // GET /posts — fetch all posts or by user_id
+  if (method === 'GET') {
+    const userId = url.searchParams.get('user_id');
+    const authorRole = url.searchParams.get('author_role');
+    let query = sr.from('posts').select('*').order('created_at', { ascending: false });
+    if (userId) query = query.eq('user_id', userId);
+    if (authorRole) query = query.eq('author_role', authorRole);
+    const { data, error } = await query;
+    if (error) return json({ error: error.message }, 500);
+    return json(data || []);
+  }
+
+  // POST /posts — create a post
+  if (method === 'POST') {
+    if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
+    if (user.role !== 'guide' && user.role !== 'ambassador') return json({ error: 'Only guides and ambassadors can post' }, 403);
+    const body = reqBody(event);
+    if (!body.content || body.content.length > 600) return json({ error: 'Content is required and must be 600 characters or less' }, 400);
+    // Look up author name
+    let authorName = user.email;
+    if (user.role === 'guide') {
+      const { data: g } = await sr.from('guides').select('trading_name').eq('user_id', user.id).maybeSingle();
+      if (g?.trading_name) authorName = g.trading_name;
+    }
+    const { data, error } = await sr.from('posts').insert({
+      id: 'pst_' + Date.now(),
+      user_id: user.id,
+      author_role: user.role,
+      author_name: authorName,
+      content: body.content,
+      image_url: body.image_url || null,
+      video_url: body.video_url || null,
+    }).select().single();
+    if (error) return json({ error: error.message }, 500);
+    return json(data, 201);
+  }
+
+  // DELETE /posts/:id — delete own post
+  if (method === 'DELETE') {
+    if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
+    if (!postId) return json({ error: 'Missing post id' }, 400);
+    const { error } = await sr.from('posts').delete().eq('id', postId).eq('user_id', user.id);
+    if (error) return json({ error: error.message }, 500);
+    return json({ ok: true });
+  }
+
+  return json({ error: 'Method not allowed' }, 405);
+}
+
 // ─── Main Router ──────────────────────────────────────────────────────
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json({ ok: true });
@@ -400,6 +460,8 @@ exports.handler = async (event) => {
       return handleApplications(event);
     case 'guide-profile':
       return handleGuideProfile(event);
+    case 'posts':
+      return handlePosts(event);
     default:
       return json({ error: 'Not found' }, 404);
   }

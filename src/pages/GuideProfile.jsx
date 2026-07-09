@@ -17,6 +17,7 @@ import ImpactCalculator from '../components/ImpactCalculator';
 import { fetchGuideById } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { formatPrice, getStoredCurrency } from '../lib/currency';
+import UpdateFeed from '../components/UpdateFeed';
 
 export default function GuideProfile() {
   const { id } = useParams();
@@ -175,6 +176,11 @@ export default function GuideProfile() {
               <Typography variant="body2" color="text.secondary">{cert}</Typography>
             </Box>
           ))}
+        </Paper>
+
+        <Paper elevation={0} sx={{ p: 2, mt: 2, mb: 3, border: '1px solid rgba(16,42,67,0.08)' }}>
+          <Typography variant="body2" fontWeight={700} mb={1.5}>Updates</Typography>
+          <UpdateFeed userId={guide.user_id} />
         </Paper>
       </Container>
     </Box>
