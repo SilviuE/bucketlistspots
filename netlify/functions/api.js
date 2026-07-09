@@ -326,20 +326,21 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    // Debug: check update by id removes hyphens
-    const userIdRaw = user.id;
-    const userIdHyphenless = userIdRaw.replace(/-/g, '');
-    const existingUid = existing.id;
-    // Count rows matching by user_id (raw uuid)
-    const { count: countByUid } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', userIdRaw);
-    const { count: countByUidHL } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', userIdHyphenless);
-    const { count: countByIdHL } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('id', userIdHyphenless);
-    // Try update with raw user id
-    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', userIdRaw).select().maybeSingle();
-    if (updErr) return json({ error: updErr.message, debug: 'sr-update-failed' }, 500);
-    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', userIdRaw).maybeSingle();
+    // Try raw HTTP PATCH with user_id
+    const srp = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const su = process.env.VITE_SUPABASE_URL;
+    const rawBody = JSON.stringify({ status: 'pending', updated_at: new Date().toISOString() });
+    const rawUrl = `${su}/rest/v1/guides?user_id=eq.${encodeURIComponent(user.id)}`;
+    const rawRes = await fetch(rawUrl, {
+      method: 'PATCH',
+      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+      body: rawBody,
+    });
+    const rawStatus = rawRes.status;
+    const rawText = await rawRes.text();
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { userIdRaw, existingId: existingUid, existingUid, countByUid, countByUidHL, countByIdHL, dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { rawStatus, rawText: rawText.slice(0, 200), dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
