@@ -22,6 +22,7 @@ export default function HeroSection() {
         <Box
           component="img"
           src="/images/hero-clouds.jpg"
+          alt="Mount Kilimanjaro landscape with clouds"
           sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
       </Box>

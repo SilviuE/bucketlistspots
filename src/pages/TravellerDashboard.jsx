@@ -160,7 +160,7 @@ export default function TravellerDashboard() {
               <Typography variant="h2" mb={1.5}>Upcoming Trips</Typography>
               {bookings.slice(0, 2).map((b, i) => (
                 <Paper key={i} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, display: 'flex', gap: 1.5 }}>
-                  <Avatar src={guides.find(g => g.id === b.guideId)?.photo || ''} sx={{ width: 40, height: 40 }} />
+                  <Avatar src={guides.find(g => g.id === b.guideId)?.photo || ''} alt={b.guideName} sx={{ width: 40, height: 40 }} />
                   <Box>
                     <Typography variant="body2" fontWeight={700}>{b.route || 'Adventure'}</Typography>
                     <Typography variant="caption" color="text.secondary">with {b.guideName} · {b.date}</Typography>
@@ -259,7 +259,7 @@ export default function TravellerDashboard() {
             bookings.map((b, i) => (
               <Paper key={i} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
                 <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
-                  <Avatar src={guides.find(g => g.id === b.guideId)?.photo || ''} sx={{ width: 44, height: 44 }} />
+                  <Avatar src={guides.find(g => g.id === b.guideId)?.photo || ''} alt={b.guideName} sx={{ width: 44, height: 44 }} />
                   <Box sx={{ flex: 1 }}>
                     <Typography variant="body2" fontWeight={700}>{b.route || 'Adventure'}</Typography>
                     <Typography variant="caption" color="text.secondary" display="block">Guide: {b.guideName}</Typography>
@@ -338,7 +338,7 @@ function JournalView({ user }) {
               <Typography variant="body2" fontWeight={700}>{entry.title}</Typography>
               <IconButton size="small" onClick={() => deleteJournalEntry(entry.id)}><DeleteIcon sx={{ fontSize: 16, color: '#E05D3A' }} /></IconButton>
             </Box>
-            {entry.image && <Box component="img" src={entry.image} sx={{ width: '100%', height: 160, objectFit: 'cover', borderRadius: 2, mb: 1 }} />}
+            {entry.image && <Box component="img" src={entry.image} alt={entry.title || 'Travel journal photo'} sx={{ width: '100%', height: 160, objectFit: 'cover', borderRadius: 2, mb: 1 }} />}
             <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'pre-line' }}>{entry.content}</Typography>
             <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
               <Chip label={entry.location || 'No location'} size="small" variant="outlined" sx={{ fontSize: 10 }} />
@@ -396,7 +396,7 @@ function GalleryView() {
           {galleryImages.map(img => (
             <Grid item xs={4} key={img.id}>
               <Box sx={{ position: 'relative', borderRadius: 2, overflow: 'hidden', cursor: 'pointer', '&:hover .del': { opacity: 1 } }}>
-                <Box component="img" src={img.url} sx={{ width: '100%', height: 120, objectFit: 'cover' }} />
+                <Box component="img" src={img.url} alt={img.caption || 'Travel gallery photo'} sx={{ width: '100%', height: 120, objectFit: 'cover' }} />
                 <IconButton className="del" size="small" onClick={() => deleteGalleryImage(img.id)}
                   sx={{ position: 'absolute', top: 4, right: 4, bgcolor: 'rgba(0,0,0,0.5)', color: '#FFF', opacity: 0, transition: '0.2s', width: 24, height: 24 }}>
                   <DeleteIcon sx={{ fontSize: 14 }} />

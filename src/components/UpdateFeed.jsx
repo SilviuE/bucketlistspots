@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Box, Typography, TextField, Button, Card, CardMedia, CardContent, IconButton, CircularProgress, Paper, Chip } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabaseClient';
 
 export default function UpdateFeed({ userId, authorRole, showCreate = false, onCreated }) {
   const [posts, setPosts] = useState([]);
@@ -111,7 +111,7 @@ export default function UpdateFeed({ userId, authorRole, showCreate = false, onC
             <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{post.content}</Typography>
           </CardContent>
           {post.image_url && (
-            <CardMedia component="img" image={post.image_url} alt=""
+            <CardMedia component="img" image={post.image_url} alt={post.content ? `Photo: ${post.content.slice(0, 80)}` : 'Update photo'}
               sx={{ maxHeight: 300, objectFit: 'cover' }} />
           )}
           {post.video_url && (

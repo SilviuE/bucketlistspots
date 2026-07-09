@@ -59,6 +59,7 @@ export default function GuideProfile() {
         <Box
           component="img"
           src={guide.heroImage}
+          alt={`${guide.name}'s guide hero image in ${guide.location}`}
           sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
         <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, p: 2, display: 'flex', justifyContent: 'space-between' }}>
@@ -73,10 +74,10 @@ export default function GuideProfile() {
 
       <Container maxWidth="sm" sx={{ px: 2, mt: -5, position: 'relative', zIndex: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 2, mb: 1 }}>
-          <Avatar src={guide.photo} sx={{ width: 80, height: 80, border: '3px solid #FFFFFF', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }} />
+          <Avatar src={guide.photo} alt={guide.name} sx={{ width: 80, height: 80, border: '3px solid #FFFFFF', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <Typography variant="h3" noWrap>{guide.name}</Typography>
+              <Typography variant="h1" noWrap sx={{ fontSize: '1.5rem', fontWeight: 700 }}>{guide.name}</Typography>
               {guide.badge === 'premium' && <VerifiedIcon sx={{ color: 'secondary.main', fontSize: 22 }} />}
             </Box>
             <Typography variant="body2" color="text.secondary">{guide.tradingName}</Typography>

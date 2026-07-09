@@ -78,7 +78,7 @@ const [currency, setCurrency] = useState(getStoredCurrency);
   if (!guide) {
     return (
       <Container maxWidth="sm" sx={{ px: 2, pt: 4, textAlign: 'center' }}>
-        <Typography variant="h2">Guide not found</Typography>
+        <Typography variant="h1" sx={{ fontSize: '1.5rem', fontWeight: 700 }}>Guide not found</Typography>
         <Button variant="contained" onClick={() => navigate('/book')}>Browse Guides</Button>
       </Container>
     );
@@ -158,7 +158,7 @@ const [currency, setCurrency] = useState(getStoredCurrency);
           <Box sx={{ width: 64, height: 64, borderRadius: '50%', bgcolor: '#4CAF50', display: 'flex', alignItems: 'center', justifyContent: 'center', mx: 'auto', mb: 2 }}>
             <Typography sx={{ color: '#FFF', fontSize: 28 }}>✓</Typography>
           </Box>
-          <Typography variant="h2" sx={{ color: '#2A9D8F', mb: 1 }}>Booking Confirmed!</Typography>
+          <Typography variant="h1" sx={{ color: '#2A9D8F', mb: 1, fontSize: '1.5rem', fontWeight: 700 }}>Booking Confirmed!</Typography>
           <Typography variant="body2" color="text.secondary" mb={3}>
             Your deposit of <strong>{formatPrice(totalDeposit, currency)}</strong> has been received. {guide.name} will confirm your dates within 24 hours.
           </Typography>
@@ -191,12 +191,12 @@ const [currency, setCurrency] = useState(getStoredCurrency);
       <SEO title="Book Your Adventure" description="Secure your bucket list adventure with a verified local guide. Pay deposit via Stripe." path={`/checkout/${guideId}`} />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
         <IconButton onClick={() => navigate(-1)} size="small"><ArrowBackIcon /></IconButton>
-        <Typography variant="h2">Book Your Adventure</Typography>
+        <Typography variant="h1" sx={{ fontSize: '1.5rem', fontWeight: 700 }}>Book Your Adventure</Typography>
       </Box>
 
       <Paper elevation={0} sx={{ p: 1.5, mb: 3, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <Avatar src={guide.photo} sx={{ width: 44, height: 44 }} />
+          <Avatar src={guide.photo} alt={guide.name} sx={{ width: 44, height: 44 }} />
           <Box sx={{ flex: 1 }}>
             <Typography variant="body2" fontWeight={700}>{guide.name}</Typography>
             <Typography variant="caption" color="text.secondary">{guide.location} · {guide.tradingName}</Typography>

@@ -22,7 +22,7 @@ export default function GuideCard({ guide, variant = 'default' }) {
         onClick={() => navigate(`/guide/${guide.id}`)}
       >
         <Box sx={{ display: 'flex', p: 2, gap: 1.5, alignItems: 'center' }}>
-          <Avatar src={guide.photo} sx={{ width: 48, height: 48 }} />
+          <Avatar src={guide.photo} alt={guide.name} sx={{ width: 48, height: 48 }} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="body2" fontWeight={700} noWrap>{guide.name}</Typography>
             <Typography variant="caption" color="text.secondary" noWrap>{guide.location}</Typography>
@@ -54,7 +54,7 @@ export default function GuideCard({ guide, variant = 'default' }) {
       />
       <CardContent sx={{ pb: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
-          <Avatar src={guide.photo} sx={{ width: 48, height: 48, border: '2px solid white', mt: -4, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }} />
+          <Avatar src={guide.photo} alt={guide.name} sx={{ width: 48, height: 48, border: '2px solid white', mt: -4, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <Typography variant="body1" fontWeight={700} noWrap>{guide.name}</Typography>
