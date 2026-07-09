@@ -326,7 +326,11 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    // Debug: count rows matching by id and by user_id
+    // Debug: check if user.id matches existing.user_id
+    const jwtUser = jwtDecode(token);
+    const subMatch = jwtUser.sub === existing.user_id;
+    const subVal = jwtUser.sub;
+    const eUserId = existing.user_id;
     const { count: countById } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('id', existing.id);
     const { count: countByUserId } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', user.id);
     // Direct SQL via raw fetch with service role
@@ -342,7 +346,7 @@ async function handleGuideProfile(event) {
     const patchText = await patchRes.text();
     const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { countById, countByUserId, patchStatus, patchText: patchText.slice(0, 200), dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { subMatch, subVal, eUserId, countById, countByUserId, patchStatus, patchText: patchText.slice(0, 200), dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
