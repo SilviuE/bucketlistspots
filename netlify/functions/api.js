@@ -319,33 +319,36 @@ async function handleGuideProfile(event) {
 
   // POST /submit — submit for admin review
   if (method === 'POST' && path[0] === 'submit') {
-    const { data: guide } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (!guide) return json({ error: 'Guide profile not found' }, 404);
-    if (guide.status === 'published') return json({ error: 'Already published' }, 400);
-    const { data, error } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
-    if (error) return json({ error: error.message }, 500);
+    const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    if (!existing) return json({ error: 'Guide profile not found' }, 404);
+    if (existing.status === 'published') return json({ error: 'Already published' }, 400);
+    const { error: updateErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
+    if (updateErr) return json({ error: updateErr.message }, 500);
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    if (fetchErr) return json({ error: fetchErr.message }, 500);
 
-    if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
-      const html = `<h2>Guide Profile Ready for Review</h2><p><strong>${guide.trading_name || 'Unnamed Guide'}</strong> has submitted their profile.</p><table style="border-collapse:collapse;width:100%">${
-        [['Name', guide.trading_name], ['Location', guide.location],
-         ['Price', guide.price ? '$' + guide.price : '—'],
-         ['Languages', Array.isArray(guide.languages) ? guide.languages.join(', ') : guide.languages],
-         ['Experience', guide.experience + ' years'],
-         ['Routes', (guide.routes || []).length]].map(([k, v]) =>
-          `<tr style="border:1px solid #ddd"><td style="padding:6px;font-weight:700">${k}</td><td style="padding:6px">${v || '—'}</td></tr>`
-        ).join('')}</table><p><a href="https://bucketlistspots.com/admin/applications" style="background:#2A9D8F;color:#FFF;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:10px">Review in Dashboard</a></p><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
-
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: 'BucketListSpots <notifications@bucketlistspots.com>',
-          to: process.env.NOTIFICATION_EMAIL,
-          subject: `Guide Profile Ready: ${guide.trading_name || 'Unnamed Guide'} submitted for review`,
-          html,
-        }),
-      });
-    }
+    try {
+      if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
+        const html = `<h2>Guide Profile Ready for Review</h2><p><strong>${existing.trading_name || 'Unnamed Guide'}</strong> has submitted their profile.</p><table style="border-collapse:collapse;width:100%">${
+          [['Name', existing.trading_name], ['Location', existing.location],
+           ['Price', existing.price ? '$' + existing.price : '—'],
+           ['Languages', Array.isArray(existing.languages) ? existing.languages.join(', ') : existing.languages],
+           ['Experience', existing.experience + ' years'],
+           ['Routes', (existing.routes || []).length]].map(([k, v]) =>
+            `<tr style="border:1px solid #ddd"><td style="padding:6px;font-weight:700">${k}</td><td style="padding:6px">${v || '—'}</td></tr>`
+          ).join('')}</table><p><a href="https://bucketlistspots.com/admin/applications" style="background:#2A9D8F;color:#FFF;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:10px">Review in Dashboard</a></p><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'BucketListSpots <notifications@bucketlistspots.com>',
+            to: process.env.NOTIFICATION_EMAIL,
+            subject: `Guide Profile Ready: ${existing.trading_name || 'Unnamed Guide'} submitted for review`,
+            html,
+          }),
+        });
+      }
+    } catch (mailErr) { console.error('Email send failed:', mailErr); }
 
     return json(data);
   }
