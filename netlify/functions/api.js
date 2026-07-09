@@ -326,11 +326,17 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', existing.id);
-    if (updErr) return json({ error: updErr.message, debug: 'sr-update-failed' }, 500);
-    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('id', existing.id).maybeSingle();
+    const eid = String(existing.id).trim();
+    // Try UPDATE by id first, then fallback to user_id
+    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', eid);
+    if (updErr) {
+      // Fallback: try by user_id
+      const { error: updErr2 } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
+      if (updErr2) return json({ error: updErr2.message, debug: 'both-updates-failed' }, 500);
+    }
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { fetchedId: existing.id, currentStatus: data?.status, dataKeys: data ? Object.keys(data) : null } }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { idType: typeof existing.id, idVal: JSON.stringify(existing.id), eid, dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
