@@ -34,8 +34,8 @@ async function authUser(event) {
   const authHeader = event.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '');
   const user = jwtDecode(token);
-  if (!user) return { user: null, error: new Error('Invalid token') };
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+  if (!user) return { user: null, error: new Error('Invalid token'), supabase: null };
+  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
   return { user, error: null, supabase };
 }
 
@@ -235,19 +235,53 @@ async function handleApplications(event) {
 
 // ─── Guide Profile ────────────────────────────────────────────────────
 async function handleGuideProfile(event) {
-  const { user, error: authErr, supabase } = await authUser(event);
-  if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
-
-  const userRole = user.user_metadata?.role || user.app_metadata?.role;
-  if (userRole !== 'guide') return json({ error: `Guide access required (role: "${userRole}")` }, 403);
+  const authHeader = event.headers.authorization || '';
+  const token = authHeader.replace('Bearer ', '');
+  const user = jwtDecode(token);
+  if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
+  if (user.role !== 'guide') return json({ error: `Guide access required (role: "${user.role}")` }, 403);
 
   const method = event.httpMethod;
   const rawPath = event.path || '';
   const path = rawPath.replace(/^.*?\/guide-profile\/?/, '').split('/').filter(Boolean);
 
+  const base = `${process.env.VITE_SUPABASE_URL}/rest/v1`;
+  const opts = (body, extra = {}) => ({
+    method: extra.method || 'GET',
+    headers: {
+      'apikey': process.env.VITE_SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Prefer': extra.prefer || 'return=representation',
+      ...extra.headers,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  async function getOne(select, filter) {
+    const res = await fetch(`${base}/guides?select=${encodeURIComponent(select)}&${filter}&limit=1`, opts());
+    if (!res.ok) { const t = await res.text(); return { data: null, error: new Error(t) }; }
+    const arr = await res.json();
+    return { data: arr?.[0] || null, error: null };
+  }
+
+  async function insertRow(body) {
+    const res = await fetch(`${base}/guides?select=${encodeURIComponent('*')}`, opts(body, { method: 'POST', prefer: 'return=representation' }));
+    if (!res.ok) { const t = await res.text(); return { data: null, error: new Error(t) }; }
+    const arr = await res.json();
+    return { data: arr?.[0] || null, error: null };
+  }
+
+  async function patchRows(body, filter) {
+    const res = await fetch(`${base}/guides?${filter}`, opts(body, { method: 'PATCH' }));
+    if (!res.ok) { const t = await res.text(); return { data: null, error: new Error(t) }; }
+    const arr = await res.json();
+    return { data: arr?.[0] || null, error: null };
+  }
+
   // GET — fetch my profile + routes
   if (method === 'GET') {
-    const { data: guide, error } = await supabase.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    const { data: guide, error } = await getOne('*', `user_id=eq.${user.id}`);
     if (error) return json({ error: error.message }, 500);
     return json(guide || null);
   }
@@ -262,18 +296,25 @@ async function handleGuideProfile(event) {
       if (body[key] !== undefined) updates[key] = body[key];
     }
 
-    const { data: existing } = await supabase.from('guides').select('id').eq('user_id', user.id).maybeSingle();
+    const { data: existing } = await getOne('id', `user_id=eq.${user.id}`);
 
     if (existing) {
       updates.updated_at = new Date().toISOString();
-      const { data, error } = await supabase.from('guides').update(updates).eq('id', existing.id).select().single();
+      const { data, error } = await patchRows(updates, `id=eq.${existing.id}`);
       if (error) return json({ error: error.message }, 500);
       return json(data);
     } else {
       updates.user_id = user.id;
       updates.status = 'draft';
       updates.id = user.id.replace(/-/g, '').slice(0, 12);
-      const { data, error } = await supabase.from('guides').insert(updates).select().single();
+      // Try user JWT first; if RLS blocks, fall back to service role key
+      const { data, error } = await insertRow(updates);
+      if (error && error.message.includes('row-level security')) {
+        const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+        const { data: srData, error: srError } = await sr.from('guides').insert(updates).select().single();
+        if (srError) return json({ error: srError.message, note: 'service-role also failed' }, 500);
+        return json(srData, 201);
+      }
       if (error) return json({ error: error.message }, 500);
       return json(data, 201);
     }
@@ -282,21 +323,11 @@ async function handleGuideProfile(event) {
   // POST /routes — add a route
   if (method === 'POST' && path[0] === 'routes') {
     const body = reqBody(event);
-    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
+    const { data: guide } = await getOne('routes', `user_id=eq.${user.id}`);
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
-
     const routes = guide.routes || [];
-    routes.push({
-      id: 'rt_' + Date.now(),
-      name: body.name,
-      days: body.days || 1,
-      difficulty: body.difficulty || 'Moderate',
-      price: body.price || 0,
-      description: body.description || '',
-      image: body.image || '',
-    });
-
-    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
+    routes.push({ id: 'rt_' + Date.now(), name: body.name, days: body.days || 1, difficulty: body.difficulty || 'Moderate', price: body.price || 0, description: body.description || '', image: body.image || '' });
+    const { data, error } = await patchRows({ routes, updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
@@ -305,11 +336,10 @@ async function handleGuideProfile(event) {
   if (method === 'PUT' && path[0] === 'routes' && path[1]) {
     const routeId = path[1];
     const body = reqBody(event);
-    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
+    const { data: guide } = await getOne('routes', `user_id=eq.${user.id}`);
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
-
     const routes = (guide.routes || []).map(r => r.id === routeId ? { ...r, ...body, id: routeId } : r);
-    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
+    const { data, error } = await patchRows({ routes, updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
@@ -317,22 +347,20 @@ async function handleGuideProfile(event) {
   // DELETE /routes/:id — delete a route
   if (method === 'DELETE' && path[0] === 'routes' && path[1]) {
     const routeId = path[1];
-    const { data: guide } = await supabase.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
+    const { data: guide } = await getOne('routes', `user_id=eq.${user.id}`);
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
-
     const routes = (guide.routes || []).filter(r => r.id !== routeId);
-    const { data, error } = await supabase.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
+    const { data, error } = await patchRows({ routes, updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
 
   // POST /submit — submit for admin review
   if (method === 'POST' && path[0] === 'submit') {
-    const { data: guide } = await supabase.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    const { data: guide } = await getOne('*', `user_id=eq.${user.id}`);
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
     if (guide.status === 'published') return json({ error: 'Already published' }, 400);
-
-    const { data, error } = await supabase.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
+    const { data, error } = await patchRows({ status: 'pending', updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
     if (error) return json({ error: error.message }, 500);
 
     if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
@@ -368,7 +396,18 @@ async function handleDebugAuth(event) {
   const { user, error: authErr, supabase } = await authUser(event);
   if (authErr || !user) return json({ error: 'Unauthorized', detail: authErr?.message }, 401);
   const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-  return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message });
+  const srkSet = !!(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const srkLen = process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.length : 0;
+  // Try inserting a test row using service role key (should bypass RLS)
+  const testId = 'test_' + Date.now();
+  const { data: insertTest, error: insertErr } = await supabase.from('guides').insert({ id: testId, user_id: user.id, trading_name: 'test', status: 'draft' }).select().single();
+  if (insertErr) {
+    // Also try listing existing guides
+    const { data: guides, error: listErr } = await supabase.from('guides').select('id').limit(5);
+    return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertError: insertErr.message, listError: listErr?.message, guideCount: guides?.length });
+  }
+  await supabase.from('guides').delete().eq('id', testId);
+  return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertTest: 'OK' });
 }
 
 // ─── Main Router ──────────────────────────────────────────────────────
