@@ -272,7 +272,7 @@ async function handleGuideProfile(event) {
 
     if (existing) {
       updates.updated_at = new Date().toISOString();
-      const { data, error } = await sr.from('guides').update(updates).eq('id', existing.id).select().single();
+      const { data, error } = await sr.from('guides').update(updates).eq('user_id', user.id).select().single();
       if (error) return json({ error: error.message }, 500);
       return json(data);
     } else {
