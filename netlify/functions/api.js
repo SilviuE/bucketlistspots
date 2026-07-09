@@ -35,7 +35,7 @@ async function authUser(event) {
   const token = authHeader.replace('Bearer ', '');
   const user = jwtDecode(token);
   if (!user) return { user: null, error: new Error('Invalid token'), supabase: null };
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
   return { user, error: null, supabase };
 }
 
@@ -326,37 +326,11 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    // Decode the service role key to check its role
-    const keyPayload = jwtDecode(process.env.SUPABASE_SERVICE_ROLE_KEY);
-    const keyRole = keyPayload?.role;
-    const keySub = keyPayload?.sub;
-    const anonPayload = jwtDecode(process.env.VITE_SUPABASE_ANON_KEY);
-    const anonRole = anonPayload?.role;
-    // Also try inserting via raw HTTP with service role key
-    const srp = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const su = process.env.VITE_SUPABASE_URL;
-    const testId = 'test_' + Date.now();
-    const insRes = await fetch(`${su}/rest/v1/guides`, {
-      method: 'POST',
-      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-      body: JSON.stringify({ id: testId, user_id: user.id, trading_name: 'test', status: 'draft' }),
-    });
-    const insStatus = insRes.status;
-    const insText = await insRes.text();
-    if (insStatus === 201) {
-      await fetch(`${su}/rest/v1/guides?id=eq.${testId}`, { method: 'DELETE', headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}` } });
-    }
-    // Now try update via raw HTTP
-    const updRes = await fetch(`${su}/rest/v1/guides?user_id=eq.${encodeURIComponent(user.id)}`, {
-      method: 'PATCH',
-      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-      body: JSON.stringify({ status: 'pending', updated_at: new Date().toISOString() }),
-    });
-    const updStatus = updRes.status;
-    const updText = await updRes.text();
+    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
+    if (updErr) return json({ error: updErr.message }, 500);
     const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { keyRole, keySub, anonRole, insStatus, insText: insText.slice(0, 100), updStatus, updText: updText.slice(0, 100), dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
+    if (fetchErr) return json({ error: fetchErr.message }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated' }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
