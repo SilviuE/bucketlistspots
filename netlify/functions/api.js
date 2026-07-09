@@ -17,13 +17,26 @@ function reqBody(event) {
   return JSON.parse(event.body);
 }
 
+function jwtDecode(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+    return {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.user_metadata?.role || payload.app_metadata?.role,
+      user_metadata: payload.user_metadata || {},
+      app_metadata: payload.app_metadata || {},
+    };
+  } catch { return null; }
+}
+
 async function authUser(event) {
   const authHeader = event.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '');
-  const anon = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
-  const { data: { user }, error } = await anon.auth.getUser(token);
+  const user = jwtDecode(token);
+  if (!user) return { user: null, error: new Error('Invalid token') };
   const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
-  return { user, error, supabase };
+  return { user, error: null, supabase };
 }
 
 // ─── Stripe Checkout ──────────────────────────────────────────────────
@@ -370,17 +383,4 @@ exports.handler = async (event) => {
   switch (route) {
     case 'debug-auth':
       return handleDebugAuth(event);
-    case 'create-checkout':
-      return handleStripe(event);
-    case 'apply-guide':
-      return handleApplyGuide(event);
-    case 'apply-ambassador':
-      return handleApplyAmbassador(event);
-    case 'applications':
-      return handleApplications(event);
-    case 'guide-profile':
-      return handleGuideProfile(event);
-    default:
-      return json({ error: 'Not found' }, 404);
-  }
-};
+    
