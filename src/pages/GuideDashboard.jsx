@@ -32,7 +32,7 @@ export default function GuideDashboard() {
   const [editingRoute, setEditingRoute] = useState(null);
   const [routeForm, setRouteForm] = useState({ name: '', days: 1, difficulty: 'Moderate', price: '', description: '', image: '' });
   const [saving, setSaving] = useState(false);
-  const [profileForm, setProfileForm] = useState({ trading_name: '', bio: '', location: '', price: '', languages: '', experience: '' });
+  const [profileForm, setProfileForm] = useState({ trading_name: '', bio: '', location: '', price: '', languages: '', experience: '', photo: '' });
   const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
@@ -59,6 +59,7 @@ export default function GuideDashboard() {
           price: data.price || '',
           languages: Array.isArray(data.languages) ? data.languages.join(', ') : data.languages || '',
           experience: data.experience || '',
+          photo: data.photo || '',
         });
       }
     } catch (err) {
@@ -83,6 +84,7 @@ export default function GuideDashboard() {
           price: parseInt(profileForm.price) || 0,
           languages: profileForm.languages.split(',').map(s => s.trim()).filter(Boolean),
           experience: parseInt(profileForm.experience) || 0,
+          photo: profileForm.photo,
         }),
       });
       if (!res.ok) {
@@ -387,6 +389,7 @@ export default function GuideDashboard() {
         <DialogTitle>Edit Profile</DialogTitle>
         <DialogContent>
           <TextField fullWidth label="Trading Name" value={profileForm.trading_name} onChange={e => setProfileForm({ ...profileForm, trading_name: e.target.value })} sx={{ mb: 2, mt: 1 }} />
+          <TextField fullWidth label="Photo URL" value={profileForm.photo} onChange={e => setProfileForm({ ...profileForm, photo: e.target.value })} sx={{ mb: 2 }} placeholder="https://..." helperText="Link to your profile photo" />
           <TextField fullWidth label="Location" value={profileForm.location} onChange={e => setProfileForm({ ...profileForm, location: e.target.value })} sx={{ mb: 2 }} placeholder="e.g. Moshi, Tanzania" />
           <TextField fullWidth label="Starting Price ($)" type="number" value={profileForm.price} onChange={e => setProfileForm({ ...profileForm, price: e.target.value })} sx={{ mb: 2 }} />
           <TextField fullWidth label="Languages (comma-separated)" value={profileForm.languages} onChange={e => setProfileForm({ ...profileForm, languages: e.target.value })} sx={{ mb: 2 }} placeholder="English, Swahili" />
