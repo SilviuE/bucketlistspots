@@ -326,13 +326,16 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    const updRes = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
-    if (updRes.error) return json({ error: updRes.error.message, debug: 'update-failed' }, 500);
-    // Verify the update worked
-    const { data: check } = await sr.from('guides').select('status,updated_at').eq('user_id', user.id).maybeSingle();
-    if (check && check.status !== 'pending') return json({ error: 'Status not updated', debug: check }, 500);
-    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (fetchErr) return json({ error: fetchErr.message, debug: 'fetch-failed' }, 500);
+    const srp = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+    const updRes = await fetch(`${supabaseUrl}/rest/v1/guides?id=eq.${existing.id}`, {
+      method: 'PATCH',
+      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+      body: JSON.stringify({ status: 'pending', updated_at: new Date().toISOString() }),
+    });
+    if (!updRes.ok) { const t = await updRes.text(); return json({ error: 'update failed', debug: t }, 500); }
+    const [data] = await updRes.json();
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: data || 'no data returned' }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
