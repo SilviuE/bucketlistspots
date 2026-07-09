@@ -245,43 +245,11 @@ async function handleGuideProfile(event) {
   const rawPath = event.path || '';
   const path = rawPath.replace(/^.*?\/guide-profile\/?/, '').split('/').filter(Boolean);
 
-  const base = `${process.env.VITE_SUPABASE_URL}/rest/v1`;
-  const opts = (body, extra = {}) => ({
-    method: extra.method || 'GET',
-    headers: {
-      'apikey': process.env.VITE_SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Prefer': extra.prefer || 'return=representation',
-      ...extra.headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  async function getOne(select, filter) {
-    const res = await fetch(`${base}/guides?select=${encodeURIComponent(select)}&${filter}&limit=1`, opts());
-    if (!res.ok) { const t = await res.text(); return { data: null, error: new Error(t) }; }
-    const arr = await res.json();
-    return { data: arr?.[0] || null, error: null };
-  }
-
-  async function insertRow(body) {
-    const res = await fetch(`${base}/guides?select=${encodeURIComponent('*')}`, opts(body, { method: 'POST', prefer: 'return=representation' }));
-    if (!res.ok) { const t = await res.text(); return { data: null, error: new Error(t) }; }
-    const arr = await res.json();
-    return { data: arr?.[0] || null, error: null };
-  }
-
-  async function patchRows(body, filter) {
-    const res = await fetch(`${base}/guides?${filter}`, opts(body, { method: 'PATCH' }));
-    if (!res.ok) { const t = await res.text(); return { data: null, error: new Error(t) }; }
-    const arr = await res.json();
-    return { data: arr?.[0] || null, error: null };
-  }
+  const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
 
   // GET — fetch my profile + routes
   if (method === 'GET') {
-    const { data: guide, error } = await getOne('*', `user_id=eq.${user.id}`);
+    const { data: guide, error } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json(guide || null);
   }
@@ -296,11 +264,11 @@ async function handleGuideProfile(event) {
       if (body[key] !== undefined) updates[key] = body[key];
     }
 
-    const { data: existing } = await getOne('id', `user_id=eq.${user.id}`);
+    const { data: existing } = await sr.from('guides').select('id').eq('user_id', user.id).maybeSingle();
 
     if (existing) {
       updates.updated_at = new Date().toISOString();
-      const { data, error } = await patchRows(updates, `id=eq.${existing.id}`);
+      const { data, error } = await sr.from('guides').update(updates).eq('id', existing.id).select().single();
       if (error) return json({ error: error.message }, 500);
       return json(data);
     } else {
@@ -308,14 +276,7 @@ async function handleGuideProfile(event) {
       updates.status = 'draft';
       updates.id = user.id.replace(/-/g, '').slice(0, 12);
       updates.name = updates.trading_name || user.email?.split('@')[0] || 'Guide';
-      // Try user JWT first; if RLS blocks, fall back to service role key
-      const { data, error } = await insertRow(updates);
-      if (error && error.message.includes('row-level security')) {
-        const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
-        const { data: srData, error: srError } = await sr.from('guides').insert(updates).select().single();
-        if (srError) return json({ error: srError.message, note: 'service-role also failed' }, 500);
-        return json(srData, 201);
-      }
+      const { data, error } = await sr.from('guides').insert(updates).select().single();
       if (error) return json({ error: error.message }, 500);
       return json(data, 201);
     }
@@ -324,11 +285,11 @@ async function handleGuideProfile(event) {
   // POST /routes — add a route
   if (method === 'POST' && path[0] === 'routes') {
     const body = reqBody(event);
-    const { data: guide } = await getOne('routes', `user_id=eq.${user.id}`);
+    const { data: guide } = await sr.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
     const routes = guide.routes || [];
     routes.push({ id: 'rt_' + Date.now(), name: body.name, days: body.days || 1, difficulty: body.difficulty || 'Moderate', price: body.price || 0, description: body.description || '', image: body.image || '' });
-    const { data, error } = await patchRows({ routes, updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
+    const { data, error } = await sr.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
@@ -337,10 +298,10 @@ async function handleGuideProfile(event) {
   if (method === 'PUT' && path[0] === 'routes' && path[1]) {
     const routeId = path[1];
     const body = reqBody(event);
-    const { data: guide } = await getOne('routes', `user_id=eq.${user.id}`);
+    const { data: guide } = await sr.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
     const routes = (guide.routes || []).map(r => r.id === routeId ? { ...r, ...body, id: routeId } : r);
-    const { data, error } = await patchRows({ routes, updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
+    const { data, error } = await sr.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
@@ -348,20 +309,20 @@ async function handleGuideProfile(event) {
   // DELETE /routes/:id — delete a route
   if (method === 'DELETE' && path[0] === 'routes' && path[1]) {
     const routeId = path[1];
-    const { data: guide } = await getOne('routes', `user_id=eq.${user.id}`);
+    const { data: guide } = await sr.from('guides').select('routes').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
     const routes = (guide.routes || []).filter(r => r.id !== routeId);
-    const { data, error } = await patchRows({ routes, updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
+    const { data, error } = await sr.from('guides').update({ routes, updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
     return json(data);
   }
 
   // POST /submit — submit for admin review
   if (method === 'POST' && path[0] === 'submit') {
-    const { data: guide } = await getOne('*', `user_id=eq.${user.id}`);
+    const { data: guide } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!guide) return json({ error: 'Guide profile not found' }, 404);
     if (guide.status === 'published') return json({ error: 'Already published' }, 400);
-    const { data, error } = await patchRows({ status: 'pending', updated_at: new Date().toISOString() }, `user_id=eq.${user.id}`);
+    const { data, error } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     if (error) return json({ error: error.message }, 500);
 
     if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
