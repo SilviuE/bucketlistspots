@@ -153,8 +153,12 @@ async function handleApplications(event) {
   const { user, error: authErr, supabase } = await authUser(event);
   if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
 
-  const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single();
-  if (!profile || profile.role !== 'admin') return json({ error: 'Forbidden' }, 403);
+  const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).single();
+  if (!profile || profile.role !== 'admin') {
+    const detail = profErr ? `DB error: ${profErr.message}` : !profile ? 'No users row found' : `Role is "${profile.role}"`;
+    console.error('auth check fail:', { userId: user.id, profile, profErr });
+    return json({ error: 'Forbidden', detail }, 403);
+  }
 
   if (event.httpMethod === 'GET') {
     const type = new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
