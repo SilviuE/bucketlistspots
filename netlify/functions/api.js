@@ -155,9 +155,9 @@ async function handleApplications(event) {
 
   const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).single();
   if (!profile || profile.role !== 'admin') {
-    const detail = profErr ? `DB error: ${profErr.message}` : !profile ? 'No users row found' : `Role is "${profile.role}"`;
+    const msg = profErr ? `DB error: ${profErr.message}` : !profile ? 'No users row found' : `Your role is "${profile.role}" not "admin"`;
     console.error('auth check fail:', { userId: user.id, profile, profErr });
-    return json({ error: 'Forbidden', detail }, 403);
+    return json({ error: msg }, 403);
   }
 
   if (event.httpMethod === 'GET') {
