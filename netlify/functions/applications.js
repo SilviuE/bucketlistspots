@@ -36,8 +36,8 @@ exports.handler = async (event) => {
       if (type === 'all' || type === 'ambassador') {
         results = results.concat(await fetchTable('ambassador_applications', 'ambassador'));
       }
-      if (type === 'all' || type === 'pending-guides') {
-        const { data, error } = await supabase.from('guides').select('*').eq('status', 'pending').order('updated_at', { ascending: false });
+      if (type === 'all' || type === 'pending-guide') {
+        const { data, error } = await supabase.from('guides').select('*').in('status', ['pending', 'draft']).order('updated_at', { ascending: false });
         if (!error) {
           results = results.concat((data || []).map(r => ({ ...r, _type: 'pending-guide' })));
         }
