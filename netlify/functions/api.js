@@ -153,11 +153,8 @@ async function handleApplications(event) {
   const { user, error: authErr, supabase } = await authUser(event);
   if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
 
-  const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-  if (!profile || profile.role !== 'admin') {
-    const msg = profErr ? `DB error: ${profErr.message}` : !profile ? 'No users row found' : `Your role is "${profile.role}" not "admin"`;
-    return json({ error: msg }, 403);
-  }
+  const userRole = user.user_metadata?.role || user.app_metadata?.role;
+  if (userRole !== 'admin') return json({ error: `Forbidden: role is "${userRole}"` }, 403);
 
   if (event.httpMethod === 'GET') {
     const type = new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
@@ -227,8 +224,8 @@ async function handleGuideProfile(event) {
   const { user, error: authErr, supabase } = await authUser(event);
   if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
 
-  const { data: prof } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-  if (!prof || prof.role !== 'guide') return json({ error: 'Guide access required' }, 403);
+  const userRole = user.user_metadata?.role || user.app_metadata?.role;
+  if (userRole !== 'guide') return json({ error: `Guide access required (role: "${userRole}")` }, 403);
 
   const method = event.httpMethod;
   const rawPath = event.path || '';
