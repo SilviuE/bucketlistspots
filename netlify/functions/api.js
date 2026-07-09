@@ -326,31 +326,23 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    // Try raw HTTP PATCH with user_id — update price column instead
+    // Check database schema info
     const srp = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const su = process.env.VITE_SUPABASE_URL;
-    // Try updating a non-status column first
-    const testPrice = Math.random() * 100;
-    const patchPrice = await fetch(`${su}/rest/v1/guides?user_id=eq.${encodeURIComponent(user.id)}`, {
-      method: 'PATCH',
-      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-      body: JSON.stringify({ price: testPrice }),
-    });
-    const priceStatus = patchPrice.status;
-    const priceText = await patchPrice.text();
-    // Now fetch and check if price changed
-    const { data: priceCheck } = await sr.from('guides').select('price').eq('user_id', user.id).single();
-    // Now try updating status
-    const patchStatus = await fetch(`${su}/rest/v1/guides?user_id=eq.${encodeURIComponent(user.id)}`, {
-      method: 'PATCH',
-      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-      body: JSON.stringify({ status: 'pending', updated_at: new Date().toISOString() }),
-    });
-    const statusStatus = patchStatus.status;
-    const statusText = await patchStatus.text();
+    const { data: tblInfo } = await sr.from('information_schema.tables').select('table_name, table_type, is_insertable_into').eq('table_name', 'guides').maybeSingle();
+    const { data: colInfo } = await sr.from('information_schema.columns').select('column_name, data_type, is_updatable').eq('table_name', 'guides').eq('column_name', 'status').maybeSingle();
+    // Try using an INSERT then immediate DELETE to confirm service role has write access
+    const testId = 'test_' + Date.now();
+    const { error: insErr } = await sr.from('guides').insert({ id: testId, user_id: user.id, trading_name: 'test', status: 'draft' }).maybeSingle();
+    let insResult = 'ok';
+    if (insErr) insResult = insErr.message;
+    // Clean up test row
+    await sr.from('guides').delete().eq('id', testId);
+    // Now try update again
+    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id).select().maybeSingle();
     const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { priceStatus, priceText: priceText.slice(0, 100), priceCheck, testPrice, statusStatus, statusText: statusText.slice(0, 100), dbStatus: data?.status, dbUpdated: data?.updated_at, dbPrice: data?.price } }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { tblInfo, colInfo, insResult, updErr: updErr?.message, dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
