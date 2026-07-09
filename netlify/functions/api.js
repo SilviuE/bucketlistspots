@@ -383,4 +383,17 @@ exports.handler = async (event) => {
   switch (route) {
     case 'debug-auth':
       return handleDebugAuth(event);
-    
+    case 'create-checkout':
+      return handleStripe(event);
+    case 'apply-guide':
+      return handleApplyGuide(event);
+    case 'apply-ambassador':
+      return handleApplyAmbassador(event);
+    case 'applications':
+      return handleApplications(event);
+    case 'guide-profile':
+      return handleGuideProfile(event);
+    default:
+      return json({ error: 'Not found' }, 404);
+  }
+};
