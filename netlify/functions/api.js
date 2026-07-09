@@ -326,17 +326,23 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    const eid = String(existing.id).trim();
-    // Try UPDATE by id first, then fallback to user_id
-    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', eid);
-    if (updErr) {
-      // Fallback: try by user_id
-      const { error: updErr2 } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
-      if (updErr2) return json({ error: updErr2.message, debug: 'both-updates-failed' }, 500);
-    }
+    // Debug: count rows matching by id and by user_id
+    const { count: countById } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('id', existing.id);
+    const { count: countByUserId } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', user.id);
+    // Direct SQL via raw fetch with service role
+    const srp = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const su = process.env.VITE_SUPABASE_URL;
+    const body = JSON.stringify({ status: 'pending', updated_at: new Date().toISOString() });
+    const patchRes = await fetch(`${su}/rest/v1/guides?id=eq.${encodeURIComponent(existing.id)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+      method: 'PATCH',
+      headers: { 'apikey': srp, 'Authorization': `Bearer ${srp}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+      body,
+    });
+    const patchStatus = patchRes.status;
+    const patchText = await patchRes.text();
     const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { idType: typeof existing.id, idVal: JSON.stringify(existing.id), eid, dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { countById, countByUserId, patchStatus, patchText: patchText.slice(0, 200), dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
