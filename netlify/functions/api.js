@@ -18,10 +18,11 @@ function reqBody(event) {
 }
 
 async function authUser(event) {
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
   const authHeader = event.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '');
-  const { data: { user }, error } = await supabase.auth.getUser(token, { shouldSetAuth: false });
+  const anon = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
+  const { data: { user }, error } = await anon.auth.getUser(token);
+  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
   return { user, error, supabase };
 }
 
