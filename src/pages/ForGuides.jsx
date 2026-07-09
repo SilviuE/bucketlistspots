@@ -128,6 +128,16 @@ export default function ForGuides() {
           Apply for Verification
         </Button>
 
+        <Paper elevation={0} sx={{ p: 2, borderRadius: 3, mb: 3, bgcolor: 'rgba(255,255,255,0.95)', textAlign: 'center' }}>
+          <Typography variant="body2" fontWeight={700} mb={0.5}>Not a Guide? Become an Ambassador</Typography>
+          <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
+            Earn commissions by referring guides and helping grow our community.
+          </Typography>
+          <Button variant="outlined" size="small" component={Link} to="/ambassador">
+            Learn More
+          </Button>
+        </Paper>
+
         <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)', display: 'block', textAlign: 'center' }}>
           BucketListSpots Ltd · Company No. 16595661
         </Typography>

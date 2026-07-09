@@ -224,11 +224,9 @@ async function handleApplications(event) {
     const { data, error } = await supabase.from(table).update({ status }).eq('id', id).select().single();
     if (error) return json({ error: error.message }, 500);
 
-    if (type !== 'ambassador' && status === 'approved' && data?.email) {
-      await supabase.from('users').update({ role: 'guide' }).eq('email', data.email);
-    }
-    if (type !== 'ambassador' && status === 'rejected' && data?.email) {
-      await supabase.from('users').update({ role: 'traveller' }).eq('email', data.email);
+    if (data?.email) {
+      const targetRole = status === 'approved' ? (type === 'ambassador' ? 'ambassador' : 'guide') : 'traveller';
+      await supabase.from('users').update({ role: targetRole }).eq('email', data.email);
     }
 
     return json(data);
