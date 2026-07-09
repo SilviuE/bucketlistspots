@@ -85,7 +85,10 @@ export default function GuideDashboard() {
           experience: parseInt(profileForm.experience) || 0,
         }),
       });
-      if (!res.ok) throw new Error('Save failed');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Save failed');
+      }
       const data = await res.json();
       setGuide(data);
       setProfileOpen(false);
