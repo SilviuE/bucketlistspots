@@ -1,8 +1,10 @@
 import { Container, Typography, Paper } from '@mui/material';
+import SEO from '../components/SEO';
 
 export default function Privacy() {
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO title="Privacy Policy" description="Privacy Policy for BucketListSpots.com — how we collect, use, and protect your personal data in compliance with UK GDPR." path="/privacy" />
       <Typography variant="h1" mb={0.5}>Privacy Policy</Typography>
       <Typography variant="caption" color="text.secondary" display="block" mb={3}>Last updated: July 2026</Typography>
 

@@ -4,6 +4,7 @@ import {
   Box, Container, Typography, Paper, Button, Chip, IconButton, Grid, TextField, MenuItem,
   Dialog, DialogTitle, DialogContent, DialogActions, Alert, CircularProgress,
 } from '@mui/material';
+import SEO from '../components/SEO';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -203,6 +204,7 @@ export default function GuideDashboard() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO title="Guide Dashboard" description="Manage your guide profile, routes, and availability on BucketListSpots." path="/guide-dashboard" />
       {error && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>{error}</Alert>}
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>

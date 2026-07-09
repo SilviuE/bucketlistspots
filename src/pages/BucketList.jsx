@@ -3,6 +3,7 @@ import { useState } from 'react';
 import ExploreOutlinedIcon from '@mui/icons-material/ExploreOutlined';
 import BookmarkBorderOutlinedIcon from '@mui/icons-material/BookmarkBorderOutlined';
 import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
+import SEO from '../components/SEO';
 import { useAuth } from '../context/AuthContext';
 import GuideCard from '../components/GuideCard';
 import ExperienceCard from '../components/ExperienceCard';
@@ -23,6 +24,11 @@ export default function BucketList() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO
+        title="My Bucket List"
+        description="Save and track your dream adventures. Plan your next bucket list trip with verified local guides."
+        path="/bucketlist"
+      />
       <Typography variant="h1" mb={0.5}>My Bucket List</Typography>
       <Typography variant="body2" color="text.secondary" mb={3}>
         Plan, track, and remember your adventures.

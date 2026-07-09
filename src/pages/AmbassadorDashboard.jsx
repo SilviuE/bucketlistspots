@@ -4,6 +4,7 @@ import {
   Box, Container, Typography, Paper, Button, Chip, IconButton, TextField,
   Avatar, Dialog, DialogTitle, DialogContent, DialogActions, Grid, Divider, Alert,
 } from '@mui/material';
+import SEO from '../components/SEO';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AddIcon from '@mui/icons-material/Add';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -45,6 +46,7 @@ export default function AmbassadorDashboard() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO title="Ambassador Dashboard" description="Track your referrals, commissions, and ambassador perks on BucketListSpots." path="/ambassador-dashboard" />
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Box>
           <Typography variant="h1" sx={{ fontSize: '22px' }}>

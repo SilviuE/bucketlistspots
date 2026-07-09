@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Box, Container, Typography, TextField, Button, Paper, Alert, CircularProgress, MenuItem, List, ListItem, ListItemIcon, ListItemText } from '@mui/material';
+import SEO from '../components/SEO';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InstagramIcon from '@mui/icons-material/Instagram';
 import YouTubeIcon from '@mui/icons-material/YouTube';
@@ -73,6 +74,11 @@ export default function BecomeAmbassador() {
   return (
     <Box sx={{ bgcolor: '#102A43', minHeight: '100vh', pb: 4 }}>
       <Container maxWidth="sm" sx={{ px: 2, pt: 4 }}>
+        <SEO
+          title="Ambassador Program"
+          description="Join the BucketListSpots Ambassador Program. Earn commissions, grow your brand, and get free travel perks. Apply now."
+          path="/ambassador"
+        />
         <Typography variant="h1" sx={{ color: '#FFFFFF', mb: 1, fontSize: { xs: '26px', sm: '32px' } }}>
           Become an Ambassador
         </Typography>

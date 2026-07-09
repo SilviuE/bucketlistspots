@@ -4,6 +4,7 @@ import {
   Box, Container, Typography, TextField, Button, Paper, ToggleButtonGroup, ToggleButton,
   Alert, IconButton, InputAdornment,
 } from '@mui/material';
+import SEO from '../components/SEO';
 import EmailIcon from '@mui/icons-material/Email';
 import LockIcon from '@mui/icons-material/Lock';
 import PersonIcon from '@mui/icons-material/Person';
@@ -38,13 +39,15 @@ export default function AuthPage() {
         if (!name || !email || !password) { setError('All fields required'); setSubmitting(false); return; }
         const result = await register({ name, email, password, role, avatar: '' });
         if (result.error) { setError(result.error); setSubmitting(false); return; }
-        navigate(role === 'traveller' ? '/dashboard' : role === 'guide' ? '/guide-dashboard' : '/ambassador-dashboard');
+        const dest = role === 'admin' ? '/admin/applications' : role === 'guide' ? '/guide-dashboard' : role === 'ambassador' ? '/ambassador-dashboard' : '/dashboard';
+        navigate(dest);
       } else {
         if (!email || !password) { setError('Email and password required'); setSubmitting(false); return; }
         const result = await login(email, password);
         if (result.error) { setError(result.error); setSubmitting(false); return; }
         const u = JSON.parse(localStorage.getItem('bls_user'));
-        navigate(u?.role === 'traveller' ? '/dashboard' : u?.role === 'guide' ? '/guide-dashboard' : '/ambassador-dashboard');
+        const dest = u?.role === 'admin' ? '/admin/applications' : u?.role === 'guide' ? '/guide-dashboard' : u?.role === 'ambassador' ? '/ambassador-dashboard' : '/dashboard';
+        navigate(dest);
       }
     } catch (err) {
       setError('Something went wrong. Please try again.');
@@ -54,6 +57,7 @@ export default function AuthPage() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 4, pb: 4 }}>
+      <SEO title={mode === 'login' ? 'Sign In' : 'Create Account'} description="Sign in or create an account on BucketListSpots. Access your dashboard, saved guides, and bookings." path="/auth" />
       <Box sx={{ textAlign: 'center', mb: 3 }}>
         <Typography variant="h1" sx={{ fontSize: '28px' }}>
           {mode === 'login' ? 'Welcome Back' : 'Join BucketListSpots'}

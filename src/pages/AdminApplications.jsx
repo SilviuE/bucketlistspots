@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Container, Typography, Paper, Button, Chip, CircularProgress, Alert, Tabs, Tab } from '@mui/material';
+import SEO from '../components/SEO';
 import GroupsIcon from '@mui/icons-material/Groups';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import RouteIcon from '@mui/icons-material/Route';
@@ -85,6 +86,7 @@ export default function AdminApplications() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO title="Admin Dashboard" description="Review and manage guide applications, ambassador applications, and pending guide profiles." path="/admin/applications" />
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="h1">Applications</Typography>
         <Button size="small" onClick={fetchApplications} disabled={loading}>Refresh</Button>

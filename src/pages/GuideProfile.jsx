@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Container, Typography, Avatar, Chip, Button, IconButton, Divider, Grid, Paper, Rating, CircularProgress,
 } from '@mui/material';
+import SEO from '../components/SEO';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import StarIcon from '@mui/icons-material/Star';
 import VerifiedIcon from '@mui/icons-material/Verified';
@@ -52,6 +53,7 @@ export default function GuideProfile() {
 
   return (
     <Box>
+      <SEO title={guide.name} description={`Book ${guide.name} — a verified local guide in ${guide.location}. ${guide.tagline || `${guide.name} offers authentic bucket list experiences.`}`} path={`/guide/${guide.id}`} />
       <Box sx={{ position: 'relative', height: 260, overflow: 'hidden' }}>
         <Box
           component="img"

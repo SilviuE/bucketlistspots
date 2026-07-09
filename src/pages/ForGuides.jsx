@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Box, Container, Typography, Button, Paper, List, ListItem, ListItemIcon, ListItemText } from '@mui/material';
+import SEO from '../components/SEO';
 import WebIcon from '@mui/icons-material/Web';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import PaymentsIcon from '@mui/icons-material/Payments';
@@ -18,6 +19,11 @@ export default function ForGuides() {
   return (
     <Box sx={{ bgcolor: '#102A43', minHeight: '100vh', pb: 4 }}>
       <Container maxWidth="sm" sx={{ px: 2, pt: 4 }}>
+        <SEO
+          title="For Guides"
+          description="Join BucketListSpots as a verified local guide. Get a professional website, booking system, and global visibility. Free for the first 3 months."
+          path="/guides"
+        />
         <Typography
           variant="h1"
           sx={{ color: '#FFFFFF', mb: 1, fontSize: { xs: '26px', sm: '32px' } }}

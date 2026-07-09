@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Container, Typography, TextField, Button, Paper, Alert, CircularProgress, MenuItem } from '@mui/material';
+import SEO from '../components/SEO';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 const countries = [
@@ -60,6 +61,11 @@ export default function BecomeGuide() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO
+        title="Become a Guide"
+        description="Apply to become a verified local guide on BucketListSpots. Get discovered by travelers worldwide. Free enrollment for the first 3 months."
+        path="/become-a-guide"
+      />
       <Typography variant="h1" mb={0.5}>Become a Guide</Typography>
       <Typography variant="body2" color="text.secondary" mb={3}>
         Join BucketListSpots and get discovered by travelers from around the world.

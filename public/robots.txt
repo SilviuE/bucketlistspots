@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://bucketlistspots.com/sitemap.xml

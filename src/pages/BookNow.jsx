@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Box, Container, Typography, Chip, Grid, Slider, FormControlLabel, Switch, Collapse, CircularProgress,
 } from '@mui/material';
+import SEO from '../components/SEO';
 import SearchBar from '../components/SearchBar';
 import GuideCard from '../components/GuideCard';
 import { fetchGuides } from '../lib/api';
@@ -51,6 +52,11 @@ export default function BookNow() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO
+        title="Book Now"
+        description="Browse and book verified local guides for your bucket list adventure. Search by destination, guide, or route. Safe direct booking."
+        path="/book"
+      />
       <Typography variant="h1" mb={0.5}>Book Now</Typography>
       <Typography variant="body2" color="text.secondary" mb={2}>
         Find your perfect guide and adventure.

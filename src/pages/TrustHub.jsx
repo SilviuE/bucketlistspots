@@ -3,6 +3,7 @@ import VerifiedIcon from '@mui/icons-material/Verified';
 import GppGoodIcon from '@mui/icons-material/GppGood';
 import PaymentIcon from '@mui/icons-material/Payment';
 import PeopleIcon from '@mui/icons-material/People';
+import SEO from '../components/SEO';
 import TrustBadge from '../components/TrustBadge';
 import VerificationChecklist from '../components/VerificationChecklist';
 import guides from '../data/guides';
@@ -33,6 +34,11 @@ const values = [
 export default function TrustHub() {
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO
+        title="Trust Hub"
+        description="How we ensure every adventure is safe, fair, and authentic. Learn about our guide verification process and traveler protection."
+        path="/trust"
+      />
       <Typography variant="h1" mb={0.5}>Trust Hub</Typography>
       <Typography variant="body2" color="text.secondary" mb={3}>
         How we ensure every adventure is safe, fair, and authentic.

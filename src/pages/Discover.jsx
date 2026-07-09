@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Box, Container, Typography, Button, CircularProgress } from '@mui/material';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import SEO from '../components/SEO';
 import HeroSection from '../components/HeroSection';
 import GuideCard from '../components/GuideCard';
 import ExperienceCard from '../components/ExperienceCard';
@@ -32,6 +33,11 @@ export default function Discover() {
 
   return (
     <Box>
+      <SEO
+        title="Discover"
+        description="Discover verified local guides for bucket list adventures — Kilimanjaro, Machu Picchu, Serengeti safari, and more. Book direct, pay safely."
+        path="/"
+      />
       <HeroSection />
 
       <Container maxWidth="sm" sx={{ px: 2, mt: 3, mb: 4 }}>

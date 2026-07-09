@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box, Container, Typography, Button, Paper, Avatar, Divider, TextField, MenuItem, Stepper, Step, StepLabel, Alert, Chip, CircularProgress,
 } from '@mui/material';
+import SEO from '../components/SEO';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import LockIcon from '@mui/icons-material/Lock';
 import PaymentIcon from '@mui/icons-material/Payment';
@@ -187,6 +188,7 @@ const [currency, setCurrency] = useState(getStoredCurrency);
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO title="Book Your Adventure" description="Secure your bucket list adventure with a verified local guide. Pay deposit via Stripe." path={`/checkout/${guideId}`} />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
         <IconButton onClick={() => navigate(-1)} size="small"><ArrowBackIcon /></IconButton>
         <Typography variant="h2">Book Your Adventure</Typography>

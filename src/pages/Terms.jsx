@@ -1,8 +1,10 @@
 import { Container, Typography, Paper } from '@mui/material';
+import SEO from '../components/SEO';
 
 export default function Terms() {
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO title="Terms of Service" description="Terms of Service for BucketListSpots.com operated by BucketListSpots Ltd (Company No. 16595661)." path="/terms" />
       <Typography variant="h1" mb={0.5}>Terms of Service</Typography>
       <Typography variant="caption" color="text.secondary" display="block" mb={3}>Last updated: July 2026</Typography>
 

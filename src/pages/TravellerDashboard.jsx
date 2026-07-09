@@ -4,6 +4,7 @@ import {
   Box, Container, Typography, Paper, Button, TextField, Chip, IconButton, Grid, Avatar, MenuItem,
   LinearProgress, Dialog, DialogTitle, DialogContent, DialogActions, Divider, Alert,
 } from '@mui/material';
+import SEO from '../components/SEO';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -67,6 +68,7 @@ export default function TravellerDashboard() {
 
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
+      <SEO title="Traveller Dashboard" description="Manage your bucket list, bookings, and travel journal on BucketListSpots." path="/dashboard" />
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Box>
           <Typography variant="h1" sx={{ fontSize: '22px' }}>

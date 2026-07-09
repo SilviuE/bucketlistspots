@@ -37,6 +37,7 @@ export default function MainLayout() {
 
   const getDashboardLink = () => {
     if (!user) return '/auth';
+    if (user.role === 'admin') return '/admin/applications';
     if (user.role === 'guide') return '/guide-dashboard';
     if (user.role === 'ambassador') return '/ambassador-dashboard';
     return '/dashboard';
