@@ -164,11 +164,14 @@ async function handleApplyAmbassador(event) {
 
 // ─── Admin Applications ───────────────────────────────────────────────
 async function handleApplications(event) {
-  const { user, error: authErr, supabase } = await authUser(event);
-  if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+  const authHeader = event.headers.authorization || '';
+  const token = authHeader.replace('Bearer ', '');
+  const decoded = jwtDecode(token);
+  if (!decoded || !decoded.id) return json({ error: 'Unauthorized' }, 401);
 
-  const userRole = user.user_metadata?.role || user.app_metadata?.role;
-  if (userRole !== 'admin') return json({ error: `Forbidden: role is "${userRole}"` }, 403);
+  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+  const { data: userRecord } = await supabase.from('users').select('role').eq('id', decoded.id).maybeSingle();
+  if (!userRecord || userRecord.role !== 'admin') return json({ error: 'Forbidden: admin access required' }, 403);
 
   if (event.httpMethod === 'GET') {
     const type = new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
