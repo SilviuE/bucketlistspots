@@ -153,10 +153,9 @@ async function handleApplications(event) {
   const { user, error: authErr, supabase } = await authUser(event);
   if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
 
-  const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).single();
+  const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
   if (!profile || profile.role !== 'admin') {
     const msg = profErr ? `DB error: ${profErr.message}` : !profile ? 'No users row found' : `Your role is "${profile.role}" not "admin"`;
-    console.error('auth check fail:', { userId: user.id, profile, profErr });
     return json({ error: msg }, 403);
   }
 
@@ -228,7 +227,7 @@ async function handleGuideProfile(event) {
   const { user, error: authErr, supabase } = await authUser(event);
   if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
 
-  const { data: prof } = await supabase.from('users').select('role').eq('id', user.id).single();
+  const { data: prof } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
   if (!prof || prof.role !== 'guide') return json({ error: 'Guide access required' }, 403);
 
   const method = event.httpMethod;
@@ -353,6 +352,14 @@ async function handleGuideProfile(event) {
   return json({ error: 'Method not allowed' }, 405);
 }
 
+// ─── Debug Auth ───────────────────────────────────────────────────────
+async function handleDebugAuth(event) {
+  const { user, error: authErr, supabase } = await authUser(event);
+  if (authErr || !user) return json({ error: 'Unauthorized', detail: authErr?.message }, 401);
+  const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+  return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message });
+}
+
 // ─── Main Router ──────────────────────────────────────────────────────
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json({ ok: true });
@@ -363,6 +370,8 @@ exports.handler = async (event) => {
   const route = parts[0] || '';
 
   switch (route) {
+    case 'debug-auth':
+      return handleDebugAuth(event);
     case 'create-checkout':
       return handleStripe(event);
     case 'apply-guide':
