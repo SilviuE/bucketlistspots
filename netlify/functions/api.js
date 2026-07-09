@@ -326,12 +326,20 @@ async function handleGuideProfile(event) {
     const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
     if (!existing) return json({ error: 'Guide profile not found' }, 404);
     if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    // Use user_id for update (id filter doesn't match via PATCH for some reason)
-    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
-    if (updErr) return json({ error: updErr.message, debug: 'user-id-update-failed' }, 500);
-    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    // Debug: check update by id removes hyphens
+    const userIdRaw = user.id;
+    const userIdHyphenless = userIdRaw.replace(/-/g, '');
+    const existingUid = existing.id;
+    // Count rows matching by user_id (raw uuid)
+    const { count: countByUid } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', userIdRaw);
+    const { count: countByUidHL } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('user_id', userIdHyphenless);
+    const { count: countByIdHL } = await sr.from('guides').select('*', { count: 'exact', head: true }).eq('id', userIdHyphenless);
+    // Try update with raw user id
+    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', userIdRaw).select().maybeSingle();
+    if (updErr) return json({ error: updErr.message, debug: 'sr-update-failed' }, 500);
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', userIdRaw).maybeSingle();
     if (fetchErr) return json({ error: fetchErr.message, debug: 'sr-fetch-failed' }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated', debug: { userIdRaw, existingId: existingUid, existingUid, countByUid, countByUidHL, countByIdHL, dbStatus: data?.status, dbUpdated: data?.updated_at } }, 500);
 
     try {
       if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
