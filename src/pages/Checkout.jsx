@@ -63,6 +63,7 @@ export default function Checkout() {
   const [email, setEmail] = useState(user?.email || '');
   const [phone, setPhone] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [dateError, setDateError] = useState('');
 const [paymentMethod, setPaymentMethod] = useState('stripe');
 const [processing, setProcessing] = useState(false);
 const [currency, setCurrency] = useState(getStoredCurrency);
@@ -94,6 +95,10 @@ const [currency, setCurrency] = useState(getStoredCurrency);
   const handleCurrencyChange = (c) => { setCurrency(c); setStoredCurrency(c); };
 
   const handleBook = async () => {
+    if (date && new Date(date) < new Date(new Date().toDateString())) {
+      alert('Start date must be today or later.');
+      return;
+    }
     const storedUser = (() => { try { const s = localStorage.getItem('bls_user'); return s ? JSON.parse(s) : null; } catch { return null; } })();
     if (!isLoggedIn && !storedUser) {
       navigate(`/auth?redirectTo=/checkout/${guideId}`);
@@ -227,13 +232,20 @@ const [currency, setCurrency] = useState(getStoredCurrency);
             ))}
           </TextField>
           <TextField fullWidth label="Preferred Start Date" type="date" value={date}
-            onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }}
-            inputProps={{ min: new Date().toISOString().split('T')[0] }} sx={{ mb: 2 }} />
+            onChange={(e) => { setDate(e.target.value); setDateError(''); }} InputLabelProps={{ shrink: true }}
+            inputProps={{ min: new Date().toISOString().split('T')[0] }}
+            error={!!dateError} helperText={dateError} sx={{ mb: 2 }} />
           <TextField fullWidth label="Number of Travelers" type="number" value={travelers}
             onChange={(e) => setTravelers(Math.max(1, parseInt(e.target.value) || 1))}
             inputProps={{ min: 1 }} sx={{ mb: 3 }} />
           <Button variant="contained" color="primary" fullWidth size="large"
-            disabled={!selectedRoute || !date} onClick={() => setStep(1)}>
+            disabled={!selectedRoute || !date} onClick={() => {
+              if (date && new Date(date) < new Date(new Date().toDateString())) {
+                setDateError('Start date must be today or later');
+                return;
+              }
+              setStep(1);
+            }}>
             Continue
           </Button>
         </Box>
