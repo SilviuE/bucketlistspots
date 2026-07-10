@@ -23,7 +23,7 @@ const paymentMethods = [
 export default function Checkout() {
   const { guideId } = useParams();
   const navigate = useNavigate();
-  const { user, isLoggedIn, addBooking, addBucketListItem } = useAuth();
+  const { user, isLoggedIn, authLoading, addBooking, addBucketListItem } = useAuth();
   const [searchParams] = useSearchParams();
 
   const [guide, setGuide] = useState(null);
@@ -94,8 +94,9 @@ const [currency, setCurrency] = useState(getStoredCurrency);
   const handleCurrencyChange = (c) => { setCurrency(c); setStoredCurrency(c); };
 
   const handleBook = async () => {
-    if (!isLoggedIn) {
-      navigate('/auth');
+    const storedUser = (() => { try { const s = localStorage.getItem('bls_user'); return s ? JSON.parse(s) : null; } catch { return null; } })();
+    if (!isLoggedIn && !storedUser) {
+      navigate(`/auth?redirectTo=/checkout/${guideId}`);
       return;
     }
     setProcessing(true);
@@ -226,7 +227,8 @@ const [currency, setCurrency] = useState(getStoredCurrency);
             ))}
           </TextField>
           <TextField fullWidth label="Preferred Start Date" type="date" value={date}
-            onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }} sx={{ mb: 2 }} />
+            onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }}
+            inputProps={{ min: new Date().toISOString().split('T')[0] }} sx={{ mb: 2 }} />
           <TextField fullWidth label="Number of Travelers" type="number" value={travelers}
             onChange={(e) => setTravelers(Math.max(1, parseInt(e.target.value) || 1))}
             inputProps={{ min: 1 }} sx={{ mb: 3 }} />
@@ -243,7 +245,7 @@ const [currency, setCurrency] = useState(getStoredCurrency);
             <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
               <Typography variant="caption">
                 <strong>Already have an account?</strong>{' '}
-                <Box component="span" onClick={() => navigate('/auth')} sx={{ color: '#2A9D8F', fontWeight: 700, cursor: 'pointer' }}>Sign in</Box>
+                <Box component="span" onClick={() => navigate(`/auth?redirectTo=/checkout/${guideId}`)} sx={{ color: '#2A9D8F', fontWeight: 700, cursor: 'pointer' }}>Sign in</Box>
                 {' '}to auto-fill your details.
               </Typography>
             </Alert>
@@ -354,10 +356,10 @@ const [currency, setCurrency] = useState(getStoredCurrency);
             <Button
               variant="contained" color="primary"
               onClick={handleBook}
-              disabled={!confirmed || processing}
+              disabled={!confirmed || processing || authLoading}
               sx={{ flex: 2 }}
             >
-              {processing ? 'Processing...' : `Pay Deposit ${formatPrice(totalDeposit, currency)}`}
+              {authLoading ? 'Loading...' : processing ? 'Processing...' : `Pay Deposit ${formatPrice(totalDeposit, currency)}`}
             </Button>
           </Box>
         </Box>

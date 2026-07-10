@@ -14,6 +14,16 @@ function save(key, data) {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
+function buildFallbackUser(authUser) {
+  return {
+    id: authUser.id,
+    name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'User',
+    email: authUser.email,
+    role: authUser.user_metadata?.role || authUser.app_metadata?.role || 'traveller',
+    avatar: '',
+  };
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => load('bls_user', null));
   const [session, setSession] = useState(null);
@@ -39,16 +49,17 @@ export function AuthProvider({ children }) {
             if (data) {
               setUser(data);
               save('bls_user', data);
+            } else {
+              const fallback = buildFallbackUser(session.user);
+              setUser(fallback);
+              save('bls_user', fallback);
             }
           });
-      } else {
-        setUser(null);
-        save('bls_user', null);
       }
       setAuthLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       if (session?.user) {
         supabase.from('users').select('*').eq('id', session.user.id).single()
@@ -56,9 +67,13 @@ export function AuthProvider({ children }) {
             if (data) {
               setUser(data);
               save('bls_user', data);
+            } else {
+              const fallback = buildFallbackUser(session.user);
+              setUser(fallback);
+              save('bls_user', fallback);
             }
           });
-      } else {
+      } else if (event === 'SIGNED_OUT') {
         setUser(null);
         save('bls_user', null);
       }
@@ -98,6 +113,11 @@ export function AuthProvider({ children }) {
       }
       setUser(profile);
       save('bls_user', profile);
+    } else {
+      const fallback = buildFallbackUser(authData.user);
+      fallback.role = userData.role || 'traveller';
+      setUser(fallback);
+      save('bls_user', fallback);
     }
     return { success: true };
   }, []);
@@ -125,6 +145,11 @@ export function AuthProvider({ children }) {
       }
       setUser(profile);
       save('bls_user', profile);
+    } else {
+      const fallback = buildFallbackUser(authData.user);
+      fallback.role = role;
+      setUser(fallback);
+      save('bls_user', fallback);
     }
     return { success: true };
   }, []);

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box, Container, Typography, TextField, Button, Paper, ToggleButtonGroup, ToggleButton,
   Alert, IconButton, InputAdornment,
@@ -21,6 +21,8 @@ const roles = [
 
 export default function AuthPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectTo = searchParams.get('redirectTo');
   const { register, login } = useAuth();
   const [mode, setMode] = useState('login');
   const [role, setRole] = useState('traveller');
@@ -39,15 +41,13 @@ export default function AuthPage() {
         if (!name || !email || !password) { setError('All fields required'); setSubmitting(false); return; }
         const result = await register({ name, email, password, role, avatar: '' });
         if (result.error) { setError(result.error); setSubmitting(false); return; }
-        const dest = role === 'admin' ? '/admin/applications' : role === 'guide' ? '/guide-dashboard' : role === 'ambassador' ? '/ambassador-dashboard' : '/dashboard';
-        navigate(dest);
+        navigate(redirectTo || (role === 'admin' ? '/admin/applications' : role === 'guide' ? '/guide-dashboard' : role === 'ambassador' ? '/ambassador-dashboard' : '/dashboard'));
       } else {
         if (!email || !password) { setError('Email and password required'); setSubmitting(false); return; }
         const result = await login(email, password);
         if (result.error) { setError(result.error); setSubmitting(false); return; }
         const u = JSON.parse(localStorage.getItem('bls_user'));
-        const dest = u?.role === 'admin' ? '/admin/applications' : u?.role === 'guide' ? '/guide-dashboard' : u?.role === 'ambassador' ? '/ambassador-dashboard' : '/dashboard';
-        navigate(dest);
+        navigate(redirectTo || (u?.role === 'admin' ? '/admin/applications' : u?.role === 'guide' ? '/guide-dashboard' : u?.role === 'ambassador' ? '/ambassador-dashboard' : '/dashboard'));
       }
     } catch (err) {
       setError('Something went wrong. Please try again.');
