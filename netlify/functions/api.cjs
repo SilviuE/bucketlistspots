@@ -1438,8 +1438,8 @@ async function handlePricingPreview(event) {
     if (!Number.isFinite(price) || price <= 0 || price > MAX_LISTED_TRIP_PRICE) {
       return json({ error: `tripPrice must be a positive number up to ${MAX_LISTED_TRIP_PRICE}` }, 400);
     }
-    // Max 2 decimal places: price * 100 must be an integer
-    if (!Number.isInteger(Math.round(price * 100))) {
+    // Max 2 decimal places: rounding must not change the value
+    if (Math.round(price * 100) / 100 !== price) {
       return json({ error: 'tripPrice must have at most 2 decimal places' }, 400);
     }
 
