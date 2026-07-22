@@ -46,7 +46,51 @@ async function authUser(event) {
 // Configurable flat referral discounts per currency
 const REFERRAL_FLAT_DISCOUNT = { gbp: 50, eur: 50, usd: 50 };
 const REFERRAL_DISCOUNT_CAP_PCT = 0.15; // 15% of gross BLS Platform Fee
-const PLATFORM_FEE_PCT = 0.20;          // BLS Platform Fee = 20% of listed trip price
+
+// Platform config cache (refreshed every 5 minutes from DB)
+let _platformConfig = null;
+let _platformConfigAt = 0;
+const CONFIG_CACHE_MS = 5 * 60 * 1000;
+
+async function getPlatformConfig() {
+  const now = Date.now();
+  if (_platformConfig && (now - _platformConfigAt) < CONFIG_CACHE_MS) return _platformConfig;
+  try {
+    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const { data } = await sr.from('platform_config').select('*').eq('id', 1).maybeSingle();
+    if (data) {
+      _platformConfig = data;
+      _platformConfigAt = now;
+    }
+  } catch (err) {
+    console.error('Failed to load platform_config:', err.message);
+  }
+  // Fallback to defaults if table doesn't exist yet or query fails
+  if (!_platformConfig) {
+    _platformConfig = {
+      promotional_commission_pct: 0.20,
+      standard_commission_pct: 0.18,
+      promotional_start_date: new Date().toISOString(),
+      promotional_end_date: null,
+      saas_monthly_fee_gbp: 50,
+      referral_program_enabled: true,
+      charity_challenges_enabled: true,
+    };
+    _platformConfigAt = now;
+  }
+  return _platformConfig;
+}
+
+async function getCurrentPlatformFeePct() {
+  const config = await getPlatformConfig();
+  const now = new Date();
+  const promoEnd = config.promotional_end_date ? new Date(config.promotional_end_date) : null;
+  // If no end date set, or we're still within the promotional period
+  if (!promoEnd || now < promoEnd) {
+    return Number(config.promotional_commission_pct);
+  }
+  return Number(config.standard_commission_pct);
+}
 
 function roundCurrency(amount, currency) {
   // Round to 2 decimal places (minor units handled at Stripe level)
@@ -68,6 +112,7 @@ async function handleStripe(event) {
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
     const { routeName, guideName, guideId, price, travelers, depositAmount, guestName, guestEmail, date, currency, referralCode } = reqBody(event);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
+    const platformFeePct = await getCurrentPlatformFeePct();
 
     let finalDeposit = depositAmount;
     let appliedReferral = null;
@@ -80,7 +125,7 @@ async function handleStripe(event) {
         const referrerGuideId = referrer.role === 'guide' ? referrer.id : null;
         if (referrerGuideId !== guideId) {
           // Calculate effective discount using pricing engine
-          const grossPlatformFee = price * PLATFORM_FEE_PCT;
+          const grossPlatformFee = price * platformFeePct;
           const eligibleRemaining = grossPlatformFee; // Full fee eligible at checkout
           const effectiveDiscount = calculateReferralDiscount({
             currency: currency || 'usd',
@@ -117,8 +162,8 @@ async function handleStripe(event) {
         discountAmount: String(appliedReferral?.discountAmount || 0),
         presentmentCurrency: (currency || 'usd').toLowerCase(),
         presentmentAmount: String(finalDeposit),
-        grossPlatformFee: String(price * PLATFORM_FEE_PCT),
-        platformFeePct: String(PLATFORM_FEE_PCT),
+        grossPlatformFee: String(price * platformFeePct),
+        platformFeePct: String(platformFeePct),
       },
       success_url: `${origin}/checkout/${guideId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout/${guideId}?payment=cancel`,
@@ -159,7 +204,8 @@ async function handleValidateReferral(event) {
 
     const cur = (currency || 'usd').toLowerCase();
     const advertisedMax = REFERRAL_FLAT_DISCOUNT[cur] || REFERRAL_FLAT_DISCOUNT.usd;
-    const grossPlatformFee = (price || 0) * PLATFORM_FEE_PCT;
+    const platformFeePct = await getCurrentPlatformFeePct();
+    const grossPlatformFee = (price || 0) * platformFeePct;
     const percentageCap = roundCurrency(grossPlatformFee * REFERRAL_DISCOUNT_CAP_PCT, cur);
     const effectiveDiscount = calculateReferralDiscount({
       currency: cur,
@@ -171,6 +217,7 @@ async function handleValidateReferral(event) {
       valid: true,
       code: code.toUpperCase(),
       currency: cur,
+      platformFeePct,
       advertisedMaximumDiscount: advertisedMax,
       percentageCap: REFERRAL_DISCOUNT_CAP_PCT,
       percentageCapAmount: percentageCap,
@@ -1087,6 +1134,60 @@ async function handleAdminPaymentReports(event) {
   }
 }
 
+// GET/PUT /api/admin/platform-config — view/update commission settings (admin-only)
+async function handleAdminPlatformConfig(event) {
+  try {
+    const token = (event.headers.authorization || '').replace('Bearer ', '');
+    if (!token) return json({ error: 'Unauthorized' }, 401);
+    let user;
+    try { user = jwtDecode(token); } catch { return json({ error: 'Invalid token' }, 401); }
+    if (user.role !== 'admin') return json({ error: 'Admin access required' }, 403);
+
+    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+
+    if (event.httpMethod === 'GET') {
+      const { data, error } = await sr.from('platform_config').select('*').eq('id', 1).maybeSingle();
+      if (error) return json({ error: error.message }, 500);
+      // Add computed fields
+      const now = new Date();
+      const promoEnd = data?.promotional_end_date ? new Date(data.promotional_end_date) : null;
+      const isPromoActive = !promoEnd || now < promoEnd;
+      const currentCommissionPct = isPromoActive ? Number(data.promotional_commission_pct) : Number(data.standard_commission_pct);
+      return json({
+        ...data,
+        isPromotionalPeriod: isPromoActive,
+        currentCommissionPct,
+        daysUntilPromoEnd: promoEnd ? Math.max(0, Math.ceil((promoEnd - now) / (1000 * 60 * 60 * 24))) : null,
+      });
+    }
+
+    if (event.httpMethod === 'PUT') {
+      const body = reqBody(event);
+      const allowedFields = [
+        'promotional_commission_pct', 'standard_commission_pct',
+        'promotional_start_date', 'promotional_end_date',
+        'saas_monthly_fee_gbp', 'referral_program_enabled', 'charity_challenges_enabled',
+      ];
+      const updates = {};
+      for (const field of allowedFields) {
+        if (body[field] !== undefined) updates[field] = body[field];
+      }
+      updates.updated_at = new Date().toISOString();
+
+      const { data, error } = await sr.from('platform_config').update(updates).eq('id', 1).select().single();
+      if (error) return json({ error: error.message }, 500);
+      // Invalidate cache
+      _platformConfig = null;
+      _platformConfigAt = 0;
+      return json(data);
+    }
+
+    return json({ error: 'Method not allowed' }, 405);
+  } catch (err) {
+    return json({ error: err.message }, 500);
+  }
+}
+
 // ─── Main Router ──────────────────────────────────────────────────────
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json({ ok: true });
@@ -1134,6 +1235,7 @@ exports.handler = async (event) => {
     case 'admin':
       const adminPath = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);
       if (adminPath[1] === 'payment-reports') return handleAdminPaymentReports(event);
+      if (adminPath[1] === 'platform-config') return handleAdminPlatformConfig(event);
       return json({ error: 'Not found' }, 404);
     default:
       return json({ error: 'Not found' }, 404);
