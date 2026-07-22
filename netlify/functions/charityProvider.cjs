@@ -1,22 +1,51 @@
-// JustGiving API Mock Provider for BucketListSpots Charity Challenges
-// When real API keys are available, replace mock functions with actual JustGiving API calls.
+// JustGiving API Provider for BucketListSpots Charity Challenges
 // Reference: https://developer.justgiving.com/
+//
+// MOCK_MODE is controlled by env var JUSTGIVING_MOCK_MODE=true (default in dev)
+// or when JUSTGIVING_APP_ID is not set.
 
-const MOCK_MODE = true; // Set to false when real JustGiving API keys are configured
+const MOCK_MODE = !process.env.JUSTGIVING_APP_ID || process.env.JUSTGIVING_MOCK_MODE === 'true';
 
 // ─── Mock Data Store (in-memory for development) ──────────────────────
 const mockPages = new Map();
 let mockPageCounter = 1000;
 
-// ─── Real JustGiving API Implementation (placeholder) ─────────────────
-const JUSTGIVING_API_BASE = 'https://api.justgiving.com/v1';
+// Mock charity data (used when MOCK_MODE is true, or when charity has no JustGiving page)
+const MOCK_CHARITIES = {
+  '2574196': {
+    id: '2574196',
+    name: 'African Wildlife Foundation UK',
+    description: 'AWF works to ensure that wildlife and wild lands thrive in modern Africa.',
+    logoUrl: 'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?w=100&h=100&fit=crop',
+    websiteUrl: 'https://www.awf.org',
+    verified: true,
+  },
+  'KPAP_DIRECT': {
+    id: 'KPAP_DIRECT',
+    name: 'Kilimanjaro Porters Assistance Project (KPAP)',
+    description: 'KPAP ensures that porters on Mount Kilimanjaro are treated fairly. Donations via PayPal.',
+    logoUrl: 'https://images.unsplash.com/photo-1516426122078-c23e76319801?w=100&h=100&fit=crop',
+    websiteUrl: 'https://kiliporters.org/support-our-work-donate/',
+    donationUrl: 'https://kiliporters.org/support-our-work-donate/',
+    verified: true,
+    hasJustGivingPage: false,
+  },
+};
+
+// ─── Real JustGiving API Implementation ───────────────────────────────
+// JustGiving API: https://api.justgiving.com/{appId}/v1/...
+function justGivingBaseUrl() {
+  const appId = process.env.JUSTGIVING_APP_ID;
+  if (!appId) throw new Error('JUSTGIVING_APP_ID not configured');
+  return `https://api.justgiving.com/${appId}/v1`;
+}
 
 async function justGivingRequest(path, method = 'GET', body = null) {
   const apiKey = process.env.JUSTGIVING_API_KEY;
-  const appId = process.env.JUSTGIVING_APP_ID;
-  if (!apiKey || !appId) throw new Error('JustGiving API credentials not configured');
+  if (!apiKey) throw new Error('JUSTGIVING_API_KEY not configured');
 
-  const res = await fetch(`${JUSTGIVING_API_BASE}${path}`, {
+  const url = `${justGivingBaseUrl()}${path}`;
+  const res = await fetch(url, {
     method,
     headers: {
       'x-api-key': apiKey,
@@ -25,53 +54,49 @@ async function justGivingRequest(path, method = 'GET', body = null) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
+
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`JustGiving API error ${res.status}: ${err}`);
+    const errText = await res.text().catch(() => 'No response body');
+    throw new Error(`JustGiving API ${res.status}: ${errText}`);
   }
-  return res.json();
+
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
 }
 
 // ─── Public API ───────────────────────────────────────────────────────
 
 /**
  * Fetch charity details by JustGiving charity ID.
- * Used when displaying charities to users.
+ * Falls back to mock data for charities without JustGiving pages.
  */
 async function getCharity(charityApiId) {
+  // If this is a direct-donation charity (no JustGiving page), return mock data
+  if (charityApiId === 'KPAP_DIRECT') {
+    return MOCK_CHARITIES['KPAP_DIRECT'] || null;
+  }
+
   if (MOCK_MODE) {
-    // Return mock charity data
-    const charities = {
-      'JUSTGIVING_KPAP_ID': {
-        id: 'JUSTGIVING_KPAP_ID',
-        name: 'Kilimanjaro Porters Assistance Project (KPAP)',
-        description: 'KPAP ensures that porters on Mount Kilimanjaro are treated fairly.',
-        logoUrl: 'https://images.unsplash.com/photo-1516426122078-c23e76319801?w=100&h=100&fit=crop',
-        websiteUrl: 'https://www.kilimanjaroporters.org',
-        verified: true,
-      },
-      'JUSTGIVING_AWF_ID': {
-        id: 'JUSTGIVING_AWF_ID',
-        name: 'African Wildlife Foundation',
-        description: 'AWF works to ensure that wildlife and wild lands thrive in modern Africa.',
-        logoUrl: 'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?w=100&h=100&fit=crop',
-        websiteUrl: 'https://www.africanwildlife.org',
-        verified: true,
-      },
-    };
-    return charities[charityApiId] || null;
+    return MOCK_CHARITIES[charityApiId] || null;
   }
 
   // Real API call
-  const data = await justGivingRequest(`/charity/${charityApiId}`);
-  return {
-    id: data.charityId,
-    name: data.name,
-    description: data.description,
-    logoUrl: data.logoUrl,
-    websiteUrl: data.websiteUrl,
-    verified: data.verified || false,
-  };
+  try {
+    const data = await justGivingRequest(`/charity/${charityApiId}`);
+    return {
+      id: String(data.charityId),
+      name: data.name,
+      description: data.description || data.shortDescription || '',
+      logoUrl: data.logoImageUrl || data.imageUrl || null,
+      websiteUrl: data.websiteUrl || null,
+      verified: true,
+      hasJustGivingPage: true,
+    };
+  } catch (err) {
+    console.error(`[JustGiving] getCharity(${charityApiId}) failed:`, err.message);
+    // Fall back to mock if available
+    return MOCK_CHARITIES[charityApiId] || null;
+  }
 }
 
 /**
@@ -79,6 +104,10 @@ async function getCharity(charityApiId) {
  * Returns the page URL and metadata needed to display progress.
  */
 async function createFundraisingPage({ charityApiId, pageTitle, targetAmount, currency, eventDate, userName }) {
+  if (charityApiId === 'KPAP_DIRECT') {
+    throw new Error('KPAP does not have JustGiving fundraising pages. Please donate directly at https://kiliporters.org/support-our-work-donate/');
+  }
+
   if (MOCK_MODE) {
     const pageId = `mock_page_${++mockPageCounter}`;
     const shortName = pageTitle
@@ -107,19 +136,25 @@ async function createFundraisingPage({ charityApiId, pageTitle, targetAmount, cu
     return mockPage;
   }
 
-  // Real API call
-  const data = await justGivingRequest('/fundraising/pages', 'POST', {
-    charityId: charityApiId,
+  // Real API: PUT /{appId}/v1/fundraising/pages
+  const data = await justGivingRequest('/fundraising/pages', 'PUT', {
+    charityId: parseInt(charityApiId, 10),
     pageTitle,
-    targetAmount,
-    currency: currency || 'GBP',
-    eventDate,
+    pageShortName: pageTitle
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '')
+      .slice(0, 40) + '-' + Date.now(),
+    charityOptIn: true,
+    charityFunded: false,
+    activityType: 'Trekking',
+    eventDate: eventDate || null,
   });
 
   return {
     pageId: data.pageId,
     pageShortName: data.pageShortName,
-    pageTitle: data.pageTitle,
+    pageTitle: data.pageTitle || pageTitle,
     pageUrl: `https://www.justgiving.com/fundraising/${data.pageShortName}`,
     charityId: charityApiId,
     targetAmount,
@@ -128,42 +163,43 @@ async function createFundraisingPage({ charityApiId, pageTitle, targetAmount, cu
     donorCount: 0,
     eventDate,
     status: 'active',
+    signOnUrl: data.signOnUrl || null,
   };
 }
 
 /**
  * Fetch fundraising page progress from JustGiving.
- * Called when displaying a user's fundraising dashboard.
  */
 async function getFundraisingPage(pageShortName) {
   if (MOCK_MODE) {
-    // Find mock page by short name
     for (const [, page] of mockPages) {
-      if (page.pageShortName === pageShortName) {
-        return page;
-      }
+      if (page.pageShortName === pageShortName) return { ...page };
     }
     return null;
   }
 
-  // Real API call
-  const data = await justGivingRequest(`/fundraising/pages/${pageShortName}`);
-  return {
-    pageId: data.pageId,
-    pageShortName: data.pageShortName,
-    pageTitle: data.pageTitle,
-    pageUrl: `https://www.justgiving.com/fundraising/${data.pageShortName}`,
-    targetAmount: data.targetAmount,
-    currency: data.currency,
-    totalRaised: data.totalRaised,
-    donorCount: data.donorCount,
-    eventDate: data.eventDate,
-    status: data.status,
-  };
+  try {
+    const data = await justGivingRequest(`/fundraising/pages/${pageShortName}`);
+    return {
+      pageId: data.pageId,
+      pageShortName: data.pageShortName,
+      pageTitle: data.pageTitle,
+      pageUrl: `https://www.justgiving.com/fundraising/${data.pageShortName}`,
+      targetAmount: data.target || data.targetAmount || 0,
+      currency: data.currency || 'GBP',
+      totalRaised: data.totalRaised || data.raisedAmount || 0,
+      donorCount: data.donorCount || data.numberOfDonations || 0,
+      eventDate: data.eventDate || null,
+      status: data.status || 'active',
+    };
+  } catch (err) {
+    console.error(`[JustGiving] getFundraisingPage(${pageShortName}) failed:`, err.message);
+    return null;
+  }
 }
 
 /**
- * Simulate a donation (mock mode only) for testing.
+ * Simulate a donation (mock mode only).
  * In production, JustGiving webhooks handle this.
  */
 function simulateDonation(pageShortName, amount, donorName) {

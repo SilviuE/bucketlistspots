@@ -780,14 +780,18 @@ async function handleCharities(event) {
 
     if (error) return json({ error: error.message }, 500);
 
-    // Enrich with JustGiving details if available
+    // Enrich with JustGiving details if available (skip direct-donation charities)
     const enriched = [];
     for (const c of (charities || [])) {
-      try {
-        const details = await getCharity(c.charity_api_id);
-        enriched.push({ ...c, justgiving: details });
-      } catch {
+      if (c.charity_api_id === 'KPAP_DIRECT') {
         enriched.push({ ...c, justgiving: null });
+      } else {
+        try {
+          const details = await getCharity(c.charity_api_id);
+          enriched.push({ ...c, justgiving: details });
+        } catch {
+          enriched.push({ ...c, justgiving: null });
+        }
       }
     }
 
@@ -807,6 +811,11 @@ async function handleCreateFundraising(event) {
     const { charityId, charityApiId, charityName, pageTitle, targetAmount, currency, eventDate, bookingId } = reqBody(event);
     if (!charityApiId || !pageTitle || !targetAmount) {
       return json({ error: 'Missing required fields: charityApiId, pageTitle, targetAmount' }, 400);
+    }
+
+    // Direct-donation charities (e.g. KPAP) don't have JustGiving pages
+    if (charityApiId === 'KPAP_DIRECT') {
+      return json({ error: 'This charity accepts direct donations. Please donate via their website.' }, 400);
     }
 
     // Create page via JustGiving (mock or real)

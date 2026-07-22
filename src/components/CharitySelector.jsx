@@ -216,7 +216,25 @@ export default function CharitySelector({ open, onClose, destination, guideName,
               </RadioGroup>
             </FormControl>
 
-            {selectedCharity && (
+            {selectedCharity && selectedCharity.charity_api_id === 'KPAP_DIRECT' ? (
+              <Box sx={{ mt: 2 }}>
+                <Divider sx={{ mb: 2 }} />
+                <Alert severity="info" sx={{ borderRadius: 2, mb: 1 }}>
+                  <Typography variant="caption" fontWeight={700}>Direct Donation</Typography>
+                  <Typography variant="caption" display="block">
+                    KPAP accepts donations directly. Click below to donate via their website.
+                  </Typography>
+                </Alert>
+                <Button
+                  variant="contained" color="primary" fullWidth
+                  href={selectedCharity.website_url || 'https://kiliporters.org/support-our-work-donate/'}
+                  target="_blank" rel="noopener noreferrer"
+                  endIcon={<OpenInNewIcon />}
+                >
+                  Donate to KPAP
+                </Button>
+              </Box>
+            ) : selectedCharity && (
               <Box sx={{ mt: 2 }}>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body2" fontWeight={700} mb={1.5}>Set Up Your Challenge</Typography>
@@ -262,13 +280,15 @@ export default function CharitySelector({ open, onClose, destination, guideName,
 
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onClose}>Skip for Now</Button>
-        <Button
-          variant="contained" color="primary"
-          onClick={handleCreate}
-          disabled={!selectedCharity || !pageTitle || !targetAmount || creating}
-        >
-          {creating ? <CircularProgress size={18} /> : 'Create Challenge'}
-        </Button>
+        {selectedCharity?.charity_api_id !== 'KPAP_DIRECT' && (
+          <Button
+            variant="contained" color="primary"
+            onClick={handleCreate}
+            disabled={!selectedCharity || !pageTitle || !targetAmount || creating}
+          >
+            {creating ? <CircularProgress size={18} /> : 'Create Challenge'}
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );
