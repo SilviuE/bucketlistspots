@@ -205,6 +205,17 @@ const validateReferral = async (code) => {
           date,
           currency: stripeCurrency(currency),
           referralCode: referralStatus === 'valid' ? referralCode.toUpperCase() : '',
+          termsAccepted: {
+            termsVersion: 'draft-0.3',
+            disclosureVersion: 'draft-0.3',
+            acceptedAt: new Date().toISOString(),
+            bookingRef: 'bk_' + Date.now(),
+            departureDate: date,
+            depositAmount: totalDeposit,
+            currency,
+            confirmed,
+            insuranceConfirmed,
+          },
         }),
       });
       const data = await res.json();

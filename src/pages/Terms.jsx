@@ -11,7 +11,7 @@ export default function Terms() {
       <Typography variant="h1" mb={0.5}>Terms of Service</Typography>
       <Typography variant="caption" color="text.secondary" display="block" mb={1}>Last updated: {LAST_UPDATED} | Version: {TERMS_VERSION}</Typography>
       <Alert severity="warning" sx={{ mb: 2, fontSize: 12 }}>
-        <strong>Draft — pending founder approval and UK travel-law review.</strong> Sections 6 and 7 must not be relied upon for live paid bookings until independent legal approval is complete and a dated founder approval record is stored.
+        <strong>Draft — pending legal review.</strong> Sections 6 and 7 are not yet finalised and must not be relied upon for live paid bookings until the review is complete.
       </Alert>
 
       <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(16,42,67,0.12)', borderRadius: 3, '& p': { fontSize: 13, lineHeight: 1.6, mb: 1.5, color: 'text.secondary' }, '& h2': { fontSize: 15, fontWeight: 700, mt: 2.5, mb: 1, color: 'text.primary' }, '& table': { width: '100%', borderCollapse: 'collapse', mb: 2, fontSize: 12 }, '& th, & td': { border: '1px solid rgba(16,42,67,0.12)', p: 1, textAlign: 'left', verticalAlign: 'top' }, '& th': { fontWeight: 700, bgcolor: '#F4F5F7', color: 'text.primary' } }}>

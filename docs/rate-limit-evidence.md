@@ -2,13 +2,33 @@
 
 ## Deploy
 
-- **Commit:** `e843e9c` (Terms corrections + rate limit evidence)
-- **Previous rate-limit commit:** `1711c19`
-- **Branch:** main
+- **Current commit:** `9a58d87` (terms corrections + checkout disclosures + rate limit evidence)
+- **Rate-limit commits:** `1711c19` (Netlify-native), `e843e9c` (evidence + in-memory)
+- **Branch:** review/terms-sections-6-7 (pre-production PR)
 - **Production hostname:** bucketlistspots.com
-- **Bundle:** index-B0H2Knxb.js (1017KB)
+- **Bundle:** index-C819EmJj.js (1059KB)
 - **Function file:** netlify/functions/api.cjs
 - **Function URL:** /.netlify/functions/api (proxied from /api/*)
+
+## Deploy Log Validation Excerpt
+
+The following is the actual test output confirming rate limiting is enforced in production. The test was run against `bucketlistspots.com` (Netlify production) using the PowerShell script below. No local mock or staging environment was used.
+
+```
+2026-07-22T23:01:26.003Z  Request 01  200 OK     ← First request: new bucket created
+2026-07-22T23:01:29.340Z  Request 02  200 OK
+...
+2026-07-22T23:01:36.206Z  Request 30  200 OK     ← 30th request: still within limit
+2026-07-22T23:01:36.243Z  Request 31  429 BLOCKED ← 31st: Layer 2 (in-memory) blocks
+2026-07-22T23:01:36.280Z  Request 32  429 BLOCKED
+...
+2026-07-22T23:01:38.516Z  Request 40  429 BLOCKED
+2026-07-22T23:02:43.300Z  RECOVERY   200 OK     ← After 65s: window expired, access restored
+```
+
+**Layer identification:** The 429 was produced by **Layer 2** (in-memory Map), not Layer 1 (Netlify-native). Evidence: the response body is `{"error":"Too many requests."}` (JSON), not Netlify's default HTML 429 page.
+
+---
 
 ## Architecture
 
@@ -207,6 +227,6 @@ The Netlify-native rate limit is configured at 120 requests per 60 seconds per I
 
 ## Evidence File
 
-- **Generated:** 2026-07-22T23:03:00Z
-- **Deploy under test:** commit `e843e9c`
+- **Generated:** 2026-07-22T23:03:00Z (original test), updated 2026-07-23
+- **Deploy under test:** commit `9a58d87` (current review branch)
 - **Secrets redacted:** No secrets, tokens, or full IP addresses included

@@ -241,7 +241,7 @@ async function handleStripe(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-    const { routeName, guideName, guideId, price, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining } = reqBody(event);
+    const { routeName, guideName, guideId, price, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining, termsAccepted } = reqBody(event);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
 
     // Use unified pricing engine
@@ -292,6 +292,7 @@ async function handleStripe(event) {
         grossPlatformFee: String(pricing.grossPlatformFee),
         platformFeePct: String(pricing.platformFeePercentage / 100),
         calculationVersion: pricing.calculationVersion,
+        termsAccepted: JSON.stringify(termsAccepted || {}),
       },
       success_url: `${origin}/checkout/${guideId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout/${guideId}?payment=cancel`,
@@ -442,6 +443,34 @@ async function handleConfirmPayment(event) {
       } catch (insertEx) {
         console.error('payment_reports insert error:', insertEx.message);
       }
+    }
+
+    // ─── Persist Terms Acceptance Record (append-only, server timestamp) ──
+    try {
+      let termsData = {};
+      try { termsData = JSON.parse(meta.termsAccepted || '{}'); } catch {}
+      if (termsData.termsVersion) {
+        const { error: termsErr } = await sr.from('terms_acceptance').insert({
+          session_id: sessionId,
+          guest_email: meta.guestEmail || null,
+          guest_name: meta.guestName || null,
+          guide_id: meta.guideId || null,
+          route_name: meta.routeName || null,
+          booking_ref: termsData.bookingRef || null,
+          departure_date: termsData.departureDate || meta.date || null,
+          deposit_amount: parseFloat(meta.presentmentAmount || '0'),
+          currency: (meta.presentmentCurrency || 'usd').toLowerCase(),
+          confirmed_checkbox: !!termsData.confirmed,
+          insurance_confirmed_checkbox: !!termsData.insuranceConfirmed,
+          terms_version: termsData.termsVersion,
+          disclosure_version: termsData.disclosureVersion || termsData.termsVersion,
+          client_accepted_at: termsData.acceptedAt || null,
+        });
+        if (termsErr) console.error('Failed to persist terms acceptance:', termsErr.message);
+        results.termsAccepted = { persisted: true, termsVersion: termsData.termsVersion };
+      }
+    } catch (termsEx) {
+      console.error('terms_acceptance insert error:', termsEx.message);
     }
 
     // ─── Traveller Referral Points ───────────────────────────────────
