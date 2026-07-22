@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Box, Container, Typography, Button, Paper, Avatar, Divider, TextField, MenuItem, Stepper, Step, StepLabel, Alert, Chip, CircularProgress,
+  Box, Container, Typography, Button, Paper, Avatar, Divider, TextField, MenuItem, Stepper, Step, StepLabel, Alert, Chip, CircularProgress, Collapse,
 } from '@mui/material';
 import SEO from '../components/SEO';
+import CharityChallengeCTA from '../components/CharityChallengeCTA';
+import PreTripChecklist from '../components/PreTripChecklist';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import LockIcon from '@mui/icons-material/Lock';
 import PaymentIcon from '@mui/icons-material/Payment';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import DiscountIcon from '@mui/icons-material/Discount';
 import IconButton from '@mui/material/IconButton';
 import { fetchGuideById } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
@@ -21,6 +24,7 @@ const paymentMethods = [
 ];
 
 export default function Checkout() {
+  const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:3002' : '';
   const { guideId } = useParams();
   const navigate = useNavigate();
   const { user, isLoggedIn, authLoading, addBooking, addBucketListItem } = useAuth();
@@ -33,6 +37,7 @@ export default function Checkout() {
   // Handle Stripe redirect back
   useEffect(() => {
     const paymentStatus = searchParams.get('payment');
+    const sessionId = searchParams.get('session_id');
     if (paymentStatus === 'success') {
       const savedBooking = sessionStorage.getItem('pending_booking');
       if (savedBooking) {
@@ -47,6 +52,14 @@ export default function Checkout() {
         });
         sessionStorage.removeItem('pending_booking');
         setBookingComplete(true);
+      }
+      // Credit BLS Points if referral was used
+      if (sessionId) {
+        fetch(`${apiBase}/api/confirm-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        }).catch(() => {});
       }
     }
   }, [searchParams]);
@@ -63,10 +76,44 @@ export default function Checkout() {
   const [email, setEmail] = useState(user?.email || '');
   const [phone, setPhone] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+const [insuranceConfirmed, setInsuranceConfirmed] = useState(false);
+const [porterTraining, setPorterTraining] = useState(false);
   const [dateError, setDateError] = useState('');
 const [paymentMethod, setPaymentMethod] = useState('stripe');
 const [processing, setProcessing] = useState(false);
-const [currency, setCurrency] = useState(getStoredCurrency);
+const [currency, setCurrency] = useState(getStoredCurrency());
+const [referralCode, setReferralCode] = useState('');
+const [showReferral, setShowReferral] = useState(false);
+const [referralStatus, setReferralStatus] = useState(null); // null | 'loading' | 'valid' | 'invalid'
+const [referralDiscount, setReferralDiscount] = useState(0);
+const [referralName, setReferralName] = useState('');
+const [referralError, setReferralError] = useState('');
+
+const validateReferral = async (code) => {
+  if (!code.trim()) { setReferralStatus(null); setReferralDiscount(0); setReferralError(''); return; }
+  setReferralStatus('loading');
+  setReferralError('');
+  try {
+    const res = await fetch(`${apiBase}/api/validate-referral`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code.toUpperCase(), currentGuideId: guideId }),
+    });
+    const data = await res.json();
+    if (data.valid) {
+      setReferralStatus('valid');
+      setReferralDiscount(data.discountAmount);
+      setReferralName(data.referrerName);
+    } else {
+      setReferralStatus('invalid');
+      setReferralDiscount(0);
+      setReferralError(data.error || 'Invalid code');
+    }
+  } catch {
+    setReferralStatus(null);
+    setReferralError('Could not validate code');
+  }
+};
 
   if (loading) {
     return (
@@ -91,6 +138,9 @@ const [currency, setCurrency] = useState(getStoredCurrency);
   const balanceAmount = routePrice - depositAmount;
   const totalTrip = routePrice * travelers;
   const totalDeposit = depositAmount * travelers;
+  const porterTrainingAmount = porterTraining ? 10 : 0;
+  const discountedDeposit = Math.max(0, totalDeposit - referralDiscount);
+  const finalDeposit = discountedDeposit + porterTrainingAmount;
 
   const handleCurrencyChange = (c) => { setCurrency(c); setStoredCurrency(c); };
 
@@ -123,12 +173,13 @@ const [currency, setCurrency] = useState(getStoredCurrency);
       status: 'Deposit Paid — Awaiting Confirmation',
       bookedAt: new Date().toISOString(),
       destination: guide.location,
+      referralCode: referralStatus === 'valid' ? referralCode.toUpperCase() : '',
+      referralDiscount: referralStatus === 'valid' ? referralDiscount : 0,
     };
     sessionStorage.setItem('pending_booking', JSON.stringify(pendingBooking));
 
     try {
-      const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:3002/api/create-checkout' : '/api/create-checkout';
-      const res = await fetch(apiUrl, {
+      const res = await fetch(`${apiBase}/api/create-checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -137,11 +188,12 @@ const [currency, setCurrency] = useState(getStoredCurrency);
           guideId: guide.id,
           price: routePrice,
           travelers,
-          depositAmount: totalDeposit,
+          depositAmount: totalDeposit + porterTrainingAmount,
           guestName: name,
           guestEmail: email,
           date,
           currency: stripeCurrency(currency),
+          referralCode: referralStatus === 'valid' ? referralCode.toUpperCase() : '',
         }),
       });
       const data = await res.json();
@@ -152,7 +204,7 @@ const [currency, setCurrency] = useState(getStoredCurrency);
         setProcessing(false);
       }
     } catch (err) {
-      alert('Could not connect to payment server. Make sure it is running on port 3002.');
+      alert('Could not connect to payment server. Please try again or contact support.');
       setProcessing(false);
     }
   };
@@ -172,16 +224,21 @@ const [currency, setCurrency] = useState(getStoredCurrency);
           <Alert severity="success" sx={{ mb: 2, borderRadius: 2, textAlign: 'left' }}>
             <Typography variant="caption" fontWeight={700}>Payment Receipt</Typography>
             <Typography variant="caption" display="block">Paid via: {paymentMethods.find(p => p.id === paymentMethod)?.label || 'Card'}</Typography>
-            <Typography variant="caption" display="block">Amount: {formatPrice(totalDeposit, currency)}</Typography>
+            <Typography variant="caption" display="block">Deposit: {formatPrice(totalDeposit, currency)}{referralDiscount > 0 ? ` (Referral discount: -${formatPrice(referralDiscount, currency)})` : ''}</Typography>
+            <Typography variant="caption" display="block">Balance due to {guide.name}: {formatPrice(balanceAmount * travelers, currency)}</Typography>
             <Typography variant="caption" display="block">Booking ref: {Date.now().toString(36).toUpperCase()}</Typography>
           </Alert>
 
-          <Alert severity="info" sx={{ mb: 3, textAlign: 'left', borderRadius: 2 }}>
-            <Typography variant="caption" fontWeight={700}>Next Steps:</Typography>
-            <Typography variant="caption" display="block">1. Check your email for booking confirmation and receipt.</Typography>
-            <Typography variant="caption" display="block">2. {guide.name} will reach out via WhatsApp or email within 24 hours.</Typography>
-            <Typography variant="caption" display="block">3. Pay the balance of <strong>{formatPrice(balanceAmount * travelers, currency)}</strong> directly to {guide.name} before the trip (via Wise, bank transfer, or cash on arrival).</Typography>
+          <Alert severity="info" sx={{ mb: 2, textAlign: 'left', borderRadius: 2 }}>
+            <Typography variant="caption" fontWeight={700}>Pay the balance of <strong>{formatPrice(balanceAmount * travelers, currency)}</strong> directly to {guide.name} before the trip (via Wise, bank transfer, or cash on arrival).</Typography>
           </Alert>
+
+          <PreTripChecklist guideName={guide.name} destination={guide.location} />
+
+          <CharityChallengeCTA
+            destination={guide.location}
+            guideName={guide.name}
+          />
 
           <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
             <Button variant="outlined" onClick={() => navigate('/bucketlist')}>View My Trips</Button>
@@ -301,10 +358,64 @@ const [currency, setCurrency] = useState(getStoredCurrency);
               <Typography variant="caption" color="text.secondary">Deposit Due Now (20%)</Typography>
               <Typography variant="caption" fontWeight={700} sx={{ color: '#E05D3A' }}>{formatPrice(totalDeposit, currency)}</Typography>
             </Box>
+            {referralStatus === 'valid' && (
+              <>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                  <Typography variant="caption" sx={{ color: '#2A9D8F' }}>Referral Discount ({referralName})</Typography>
+                  <Typography variant="caption" fontWeight={700} sx={{ color: '#2A9D8F' }}>-{formatPrice(referralDiscount, currency)}</Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                  <Typography variant="caption" fontWeight={700}>New Deposit Due Today</Typography>
+                  <Typography variant="caption" fontWeight={700} sx={{ color: '#E05D3A' }}>{formatPrice(discountedDeposit, currency)}</Typography>
+                </Box>
+              </>
+            )}
+            {porterTraining && (
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="caption" sx={{ color: '#2A9D8F' }}>Porter Training Fund</Typography>
+                <Typography variant="caption" fontWeight={700} sx={{ color: '#2A9D8F' }}>+{formatPrice(10, currency)}</Typography>
+              </Box>
+            )}
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
               <Typography variant="caption" color="text.secondary">Pay {guide.name} Directly Later (80%)</Typography>
               <Typography variant="caption" fontWeight={600}>{formatPrice(balanceAmount * travelers, currency)}</Typography>
             </Box>
+          </Paper>
+
+          {/* Referral Code */}
+          <Paper elevation={0} sx={{ p: 1.5, mb: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer' }}
+              onClick={() => setShowReferral(!showReferral)}>
+              <DiscountIcon sx={{ fontSize: 16, color: '#2A9D8F' }} />
+              <Typography variant="caption" fontWeight={600} sx={{ color: '#2A9D8F' }}>
+                {showReferral ? 'Hide' : 'Have a Guide Referral Code?'}
+              </Typography>
+            </Box>
+            <Collapse in={showReferral}>
+              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                <TextField fullWidth size="small" placeholder="Enter code (e.g., DAVID50)"
+                  value={referralCode}
+                  onChange={(e) => { setReferralCode(e.target.value); setReferralStatus(null); setReferralDiscount(0); setReferralError(''); }}
+                  disabled={referralStatus === 'loading'}
+                  sx={{ '& .MuiInputBase-root': { fontSize: 13 } }} />
+                <Button size="small" variant="outlined"
+                  onClick={() => validateReferral(referralCode)}
+                  disabled={!referralCode.trim() || referralStatus === 'loading'}
+                  sx={{ minWidth: 80, fontSize: 12 }}>
+                  {referralStatus === 'loading' ? <CircularProgress size={14} /> : 'Apply'}
+                </Button>
+              </Box>
+              {referralStatus === 'valid' && (
+                <Typography variant="caption" sx={{ color: '#2A9D8F', mt: 0.5, display: 'block' }}>
+                  {formatPrice(referralDiscount, currency)} discount applied! Referred by {referralName}.
+                </Typography>
+              )}
+              {referralError && (
+                <Typography variant="caption" sx={{ color: '#E05D3A', mt: 0.5, display: 'block' }}>
+                  {referralError}
+                </Typography>
+              )}
+            </Collapse>
           </Paper>
 
           <Typography variant="caption" fontWeight={700} gutterBottom display="block">
@@ -359,8 +470,35 @@ const [currency, setCurrency] = useState(getStoredCurrency);
               <strong>I acknowledge</strong> that I have read and accept the{'\n'}
               <strong>BucketListSpots Terms of Use</strong> and{'\n'}
               <strong>{guide.name}'s Booking Conditions</strong>.
-              I understand high-altitude trekking involves inherent risks and confirm that all travelers have appropriate travel insurance.
             </Typography>
+          </Box>
+
+          <Box sx={{ p: 2, mb: 2, bgcolor: '#FFF', borderRadius: 2, border: '1px solid rgba(16,42,67,0.12)', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
+            onClick={() => setInsuranceConfirmed(!insuranceConfirmed)}
+          >
+            <Box sx={{ width: 20, height: 20, borderRadius: 0.5, border: '2px solid', borderColor: insuranceConfirmed ? '#E05D3A' : 'rgba(16,42,67,0.3)', bgcolor: insuranceConfirmed ? '#E05D3A' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.2, flexShrink: 0, color: '#FFF', fontSize: 12, fontWeight: 700 }}>
+              {insuranceConfirmed && '✓'}
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              <strong>Travel Insurance:</strong> I understand that arranging adequate travel insurance (covering high-altitude trekking up to 6,000m and medical evacuation) is <strong>my sole responsibility</strong>. BucketListSpots Ltd is not authorized or regulated by the FCA to provide insurance advice.{'\n'}
+              <em>Any insurance links on this platform are for informational purposes only.</em>
+            </Typography>
+          </Box>
+
+          <Box sx={{ p: 2, mb: 2, bgcolor: '#f0faf8', borderRadius: 2, border: '1px solid #2A9D8F30', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
+            onClick={() => setPorterTraining(!porterTraining)}
+          >
+            <Box sx={{ width: 20, height: 20, borderRadius: 0.5, border: '2px solid', borderColor: porterTraining ? '#2A9D8F' : 'rgba(16,42,67,0.3)', bgcolor: porterTraining ? '#2A9D8F' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.2, flexShrink: 0, color: '#FFF', fontSize: 12, fontWeight: 700 }}>
+              {porterTraining && '✓'}
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                <strong>Sponsor a Porter's First-Aid Training</strong> (+{formatPrice(10, currency)})
+              </Typography>
+              <Typography variant="caption" display="block" sx={{ color: 'text.secondary', fontSize: 11, mt: 0.3 }}>
+                Your {formatPrice(10, currency)} funds Wilderness First Responder certification for a local porter. This makes the mountain safer and helps porters earn higher wages.
+              </Typography>
+            </Box>
           </Box>
 
           <Box sx={{ display: 'flex', gap: 1 }}>
@@ -368,10 +506,10 @@ const [currency, setCurrency] = useState(getStoredCurrency);
             <Button
               variant="contained" color="primary"
               onClick={handleBook}
-              disabled={!confirmed || processing || authLoading}
+              disabled={!confirmed || !insuranceConfirmed || processing || authLoading}
               sx={{ flex: 2 }}
             >
-              {authLoading ? 'Loading...' : processing ? 'Processing...' : `Pay Deposit ${formatPrice(totalDeposit, currency)}`}
+              {authLoading ? 'Loading...' : processing ? 'Processing...' : `Pay Deposit ${formatPrice(referralStatus === 'valid' ? finalDeposit : totalDeposit + porterTrainingAmount, currency)}`}
             </Button>
           </Box>
         </Box>

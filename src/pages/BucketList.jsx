@@ -1,5 +1,5 @@
+import { useState, useEffect } from 'react';
 import { Container, Typography, Box, Grid, Button, Tabs, Tab } from '@mui/material';
-import { useState } from 'react';
 import ExploreOutlinedIcon from '@mui/icons-material/ExploreOutlined';
 import BookmarkBorderOutlinedIcon from '@mui/icons-material/BookmarkBorderOutlined';
 import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
@@ -7,14 +7,21 @@ import SEO from '../components/SEO';
 import { useAuth } from '../context/AuthContext';
 import GuideCard from '../components/GuideCard';
 import ExperienceCard from '../components/ExperienceCard';
-import guides, { experiences } from '../data/guides';
+import { fetchGuides, fetchExperiences } from '../lib/api';
 
 export default function BucketList() {
   const [tab, setTab] = useState(0);
   const { savedGuides, savedExperiences, bookings } = useAuth();
+  const [allGuides, setAllGuides] = useState([]);
+  const [allExperiences, setAllExperiences] = useState([]);
 
-  const savedGuideData = guides.filter(g => savedGuides.includes(g.id));
-  const savedExpData = experiences.filter(e => savedExperiences.includes(e.id));
+  useEffect(() => {
+    fetchGuides().then(g => setAllGuides(g || [])).catch(() => {});
+    fetchExperiences().then(e => setAllExperiences(e || [])).catch(() => {});
+  }, []);
+
+  const savedGuideData = allGuides.filter(g => savedGuides.includes(g.id));
+  const savedExpData = allExperiences.filter(e => savedExperiences.includes(e.id));
 
   const tabs = [
     { label: 'Saved Guides', icon: ExploreOutlinedIcon, count: savedGuides.length },

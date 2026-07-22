@@ -18,11 +18,15 @@ export default function UpdateFeed({ userId, authorRole, showCreate = false, onC
   const fetchPosts = async () => {
     setLoading(true);
     try {
+      const session = (await supabase.auth.getSession()).data.session;
       const params = new URLSearchParams();
       if (userId) params.set('user_id', userId);
       if (authorRole) params.set('author_role', authorRole);
-      const res = await fetch(`/api/posts?${params}`);
+      const res = await fetch(`/api/posts?${params}`, {
+        headers: session ? { 'Authorization': `Bearer ${session.access_token}` } : {},
+      });
       if (res.ok) setPosts(await res.json());
+      else console.error('Fetch posts error:', res.status, await res.text());
     } finally {
       setLoading(false);
     }
@@ -33,12 +37,16 @@ export default function UpdateFeed({ userId, authorRole, showCreate = false, onC
     setPosting(true);
     try {
       const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('No auth session — try logging out and back in');
       const res = await fetch('/api/posts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
         body: JSON.stringify({ content: content.trim(), image_url: imageUrl || null, video_url: videoUrl || null }),
       });
-      if (!res.ok) throw new Error('Failed to post');
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`POST failed (${res.status}): ${errBody}`);
+      }
       setContent('');
       setImageUrl('');
       setVideoUrl('');
@@ -46,6 +54,7 @@ export default function UpdateFeed({ userId, authorRole, showCreate = false, onC
       onCreated?.();
     } catch (err) {
       console.error(err);
+      alert('Error: ' + err.message);
     } finally {
       setPosting(false);
     }

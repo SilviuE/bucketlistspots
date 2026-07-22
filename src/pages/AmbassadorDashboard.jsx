@@ -15,15 +15,39 @@ import YouTubeIcon from '@mui/icons-material/YouTube';
 import InstagramIcon from '@mui/icons-material/Instagram';
 import LanguageIcon from '@mui/icons-material/Language';
 import UpdateFeed from '../components/UpdateFeed';
+import RewardsPanel from '../components/RewardsPanel';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import { useAuth } from '../context/AuthContext';
 
 export default function AmbassadorDashboard() {
   const navigate = useNavigate();
   const { user, logout, scoutedGuides, addScoutedGuide, updateScoutedGuide, ambassadorCommissions } = useAuth();
+
   const [tab, setTab] = useState('overview');
   const [scoutOpen, setScoutOpen] = useState(false);
   const [form, setForm] = useState({ guideName: '', location: '', email: '', socialLink: '', whyRecommended: '' });
+  const [socialLinks, setSocialLinks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('bls_ambassador_social') || '{}'); }
+    catch { return {}; }
+  });
+  const [saved, setSaved] = useState(false);
+
+  if (!user || user.role !== 'ambassador') {
+    return (
+      <Container maxWidth="sm" sx={{ px: 2, pt: 4, pb: 4 }}>
+        <SEO title="Access Denied" description="" path="/ambassador-dashboard" />
+        <Paper elevation={0} sx={{ p: 4, textAlign: 'center', borderRadius: 3, bgcolor: '#F4F5F7' }}>
+          <Typography variant="h1" sx={{ fontSize: 22, mb: 1 }}>Access Denied</Typography>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            You need an ambassador account to access this page.
+          </Typography>
+          <Button variant="contained" color="primary" onClick={() => navigate('/ambassador')}>
+            Apply to become an Ambassador
+          </Button>
+        </Paper>
+      </Container>
+    );
+  }
 
   const handleLogout = () => { logout(); navigate('/'); };
 
@@ -42,6 +66,7 @@ export default function AmbassadorDashboard() {
     { key: 'overview', label: 'Overview' },
     { key: 'scouts', label: 'My Scouts' },
     { key: 'commissions', label: 'Commissions' },
+    { key: 'rewards', label: 'Rewards' },
     { key: 'updates', label: 'Updates' },
     { key: 'content', label: 'Content' },
   ];
@@ -221,6 +246,13 @@ export default function AmbassadorDashboard() {
         </Box>
       )}
 
+      {tab === 'rewards' && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h2" mb={1.5}>BLS Rewards</Typography>
+          <RewardsPanel />
+        </Box>
+      )}
+
       {tab === 'content' && (
         <>
           <Typography variant="h2" mb={1.5}>Your Content Hub</Typography>
@@ -253,16 +285,26 @@ export default function AmbassadorDashboard() {
           <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
             <Typography variant="body2" fontWeight={700} mb={1.5}>Connect Your Social Media</Typography>
             {[
-              { icon: YouTubeIcon, label: 'YouTube', color: '#FF0000', placeholder: 'https://youtube.com/@...' },
-              { icon: InstagramIcon, label: 'Instagram', color: '#E4405F', placeholder: 'https://instagram.com/...' },
-              { icon: LanguageIcon, label: 'Website', color: '#102A43', placeholder: 'https://...' },
+              { key: 'youtube', icon: YouTubeIcon, label: 'YouTube', color: '#FF0000', placeholder: 'https://youtube.com/@...' },
+              { key: 'instagram', icon: InstagramIcon, label: 'Instagram', color: '#E4405F', placeholder: 'https://instagram.com/...' },
+              { key: 'website', icon: LanguageIcon, label: 'Website', color: '#102A43', placeholder: 'https://...' },
             ].map(s => (
-              <Box key={s.label} sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1 }}>
+              <Box key={s.key} sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1 }}>
                 <s.icon sx={{ color: s.color, fontSize: 20 }} />
-                <TextField fullWidth size="small" placeholder={s.placeholder} variant="outlined" sx={{ '& .MuiInputBase-root': { fontSize: 12 } }} />
+                <TextField fullWidth size="small" placeholder={s.placeholder} variant="outlined"
+                  value={socialLinks[s.key] || ''}
+                  onChange={(e) => { setSocialLinks(prev => ({ ...prev, [s.key]: e.target.value })); setSaved(false); }}
+                  sx={{ '& .MuiInputBase-root': { fontSize: 12 } }} />
               </Box>
             ))}
-            <Button size="small" variant="contained" color="primary" sx={{ mt: 1 }}>Save Links</Button>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+              <Button size="small" variant="contained" color="primary" onClick={() => {
+                localStorage.setItem('bls_ambassador_social', JSON.stringify(socialLinks));
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}>Save Links</Button>
+              {saved && <Typography variant="caption" sx={{ color: '#2A9D8F' }}>Saved!</Typography>}
+            </Box>
           </Paper>
 
           <Alert severity="info" sx={{ mt: 2, borderRadius: 2 }}>

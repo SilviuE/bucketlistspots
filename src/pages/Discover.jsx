@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Box, Container, Typography, Button, CircularProgress } from '@mui/material';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import SEO from '../components/SEO';
@@ -7,7 +8,19 @@ import GuideCard from '../components/GuideCard';
 import ExperienceCard from '../components/ExperienceCard';
 import { fetchGuides, fetchExperiences, fetchDestinations } from '../lib/api';
 
+const nameToSlug = {
+  'Mount Kilimanjaro': 'mount-kilimanjaro',
+  'Everest Region': 'everest-region',
+  'Machu Picchu': 'machu-picchu',
+  'Via Transilvanica': 'via-transilvanica',
+  'Norwegian Fjords': 'norwegian-fjords',
+  'Patagonia': 'patagonia',
+  'Atlas Mountains': 'atlas-mountains',
+  'The Alps': 'the-alps',
+};
+
 export default function Discover() {
+  const navigate = useNavigate();
   const [guides, setGuides] = useState([]);
   const [experiences, setExperiences] = useState([]);
   const [destinations, setDestinations] = useState([]);
@@ -72,26 +85,31 @@ export default function Discover() {
         <Box sx={{ mt: 4 }}>
           <Typography variant="h2" mb={1.5}>Explore Destinations</Typography>
           <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', pb: 1, '&::-webkit-scrollbar': { display: 'none' } }}>
-            {destinations.map(dest => (
-              <Box
-                key={dest.name}
-                sx={{
-                  minWidth: 160, height: 180, borderRadius: 3, overflow: 'hidden',
-                  position: 'relative', cursor: 'pointer',
-                  backgroundImage: `url(${dest.image})`,
-                  backgroundSize: 'cover', backgroundPosition: 'center',
-                  '&:hover': { transform: 'scale(1.02)', transition: '0.2s' },
-                }}
-              >
-                <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(16,42,67,0.85))' }} />
-                <Box sx={{ position: 'absolute', bottom: 0, p: 1.5 }}>
-                  <Typography fontWeight={700} sx={{ color: '#FFFFFF', fontSize: 15 }}>{dest.name}</Typography>
-                  <Typography sx={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>
-                    {dest.country} · {dest.guideCount} guides
-                  </Typography>
+            {destinations.map(dest => {
+              const slug = nameToSlug[dest.name];
+              return (
+                <Box
+                  key={dest.name}
+                  onClick={() => slug && navigate(`/destination/${slug}`)}
+                  sx={{
+                    minWidth: 160, height: 180, borderRadius: 3, overflow: 'hidden',
+                    position: 'relative', cursor: slug ? 'pointer' : 'default',
+                    backgroundImage: `url(${dest.image})`,
+                    backgroundSize: 'cover', backgroundPosition: 'center',
+                    transition: 'transform 0.2s',
+                    '&:hover': { transform: slug ? 'scale(1.02)' : 'none' },
+                  }}
+                >
+                  <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(16,42,67,0.85))' }} />
+                  <Box sx={{ position: 'absolute', bottom: 0, p: 1.5 }}>
+                    <Typography fontWeight={700} sx={{ color: '#FFFFFF', fontSize: 15 }}>{dest.name}</Typography>
+                    <Typography sx={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>
+                      {dest.country} · {dest.guideCount} guides
+                    </Typography>
+                  </Box>
                 </Box>
-              </Box>
-            ))}
+              );
+            })}
           </Box>
         </Box>
 

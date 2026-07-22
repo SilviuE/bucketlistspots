@@ -17,6 +17,7 @@ import NewsFeed from './pages/NewsFeed';
 import AdminApplications from './pages/AdminApplications';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
+import DestinationPage from './pages/DestinationPage';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/news" element={<NewsFeed />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/privacy" element={<Privacy />} />
+        <Route path="/destination/:slug" element={<DestinationPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

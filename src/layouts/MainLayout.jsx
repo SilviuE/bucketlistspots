@@ -23,7 +23,7 @@ export default function MainLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, isLoggedIn, logout } = useAuth();
-  const [currency, setCurrency] = useState(getStoredCurrency);
+  const [currency, setCurrency] = useState(getStoredCurrency());
 
   const currentValue = navItems.find(item => {
     if (item.value === '/') return location.pathname === '/';
@@ -89,11 +89,20 @@ export default function MainLayout() {
       <Box sx={{ pt: '52px' }}>
         <Outlet />
       </Box>
-      <Box sx={{ textAlign: 'center', py: 2, px: 2 }}>
+      <Box sx={{ textAlign: 'center', py: 2, px: 2, borderTop: '1px solid rgba(16,42,67,0.06)' }}>
         <Typography variant="caption" color="text.disabled" display="block" mb={0.5}>
           &copy; {new Date().getFullYear()} BucketListSpots Ltd &middot; Company No. 16595661
         </Typography>
-        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1.5 }}>
+        <Typography variant="caption" color="text.disabled" display="block" mb={0.5} sx={{ fontSize: 10, lineHeight: 1.4, maxWidth: 400, mx: 'auto' }}>
+          BucketListSpots Ltd acts solely as a disclosed booking agent. Your contract for any trip is directly with the Guide.
+        </Typography>
+        <Typography variant="caption" color="text.disabled" display="block" mb={0.5} sx={{ fontSize: 10, lineHeight: 1.4, maxWidth: 400, mx: 'auto' }}>
+          BucketListSpots Ltd is not authorized or regulated by the FCA. Arranging travel insurance is your sole responsibility.
+        </Typography>
+        <Typography variant="caption" color="text.disabled" display="block" mb={0.5} sx={{ fontSize: 10, lineHeight: 1.4, maxWidth: 400, mx: 'auto' }}>
+          "Verified" means we check licenses and identity. We do not supervise daily operations.
+        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1.5, mt: 1 }}>
           <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/terms">Terms</Typography>
           <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/privacy">Privacy</Typography>
           <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/news">News</Typography>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Container, Typography, Paper, Button, TextField, Chip, IconButton, Grid, Avatar, MenuItem,
@@ -16,8 +16,11 @@ import BookOnlineIcon from '@mui/icons-material/BookOnline';
 import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import BookIcon from '@mui/icons-material/Book';
 import LogoutIcon from '@mui/icons-material/Logout';
+import VolunteerActivismIcon from '@mui/icons-material/VolunteerActivism';
 import { useAuth } from '../context/AuthContext';
-import guides from '../data/guides';
+import { fetchGuides } from '../lib/api';
+import FundraisingProgress from '../components/FundraisingProgress';
+import PreTripChecklist from '../components/PreTripChecklist';
 
 const statusColors = { dreaming: '#9E9E9E', planning: '#2A9D8F', booked: '#E05D3A', completed: '#4CAF50' };
 const statusIcons = { dreaming: FlagIcon, planning: EditIcon, booked: BookOnlineIcon, completed: CheckCircleIcon };
@@ -36,6 +39,11 @@ export default function TravellerDashboard() {
   const [openNew, setOpenNew] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ title: '', destination: '', targetDate: '', status: 'dreaming', notes: '' });
+  const [allGuides, setAllGuides] = useState([]);
+
+  useEffect(() => {
+    fetchGuides().then(g => setAllGuides(g || [])).catch(() => {});
+  }, []);
 
   const handleLogout = () => { logout(); navigate('/'); };
 
@@ -59,6 +67,7 @@ export default function TravellerDashboard() {
     { key: 'overview', label: 'Overview', icon: FlightTakeoffIcon },
     { key: 'bucketlist', label: 'Bucket List', icon: FlagIcon },
     { key: 'bookings', label: 'My Trips', icon: BookOnlineIcon },
+    { key: 'challenges', label: 'Challenges', icon: VolunteerActivismIcon },
     { key: 'journal', label: 'Journal', icon: BookIcon },
     { key: 'gallery', label: 'Gallery', icon: PhotoLibraryIcon },
   ];
@@ -160,7 +169,7 @@ export default function TravellerDashboard() {
               <Typography variant="h2" mb={1.5}>Upcoming Trips</Typography>
               {bookings.slice(0, 2).map((b, i) => (
                 <Paper key={i} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, display: 'flex', gap: 1.5 }}>
-                  <Avatar src={guides.find(g => g.id === b.guideId)?.photo || ''} alt={b.guideName} sx={{ width: 40, height: 40 }} />
+                  <Avatar src={allGuides.find(g => g.id === b.guideId)?.photo || ''} alt={b.guideName} sx={{ width: 40, height: 40 }} />
                   <Box>
                     <Typography variant="body2" fontWeight={700}>{b.route || 'Adventure'}</Typography>
                     <Typography variant="caption" color="text.secondary">with {b.guideName} · {b.date}</Typography>
@@ -171,11 +180,19 @@ export default function TravellerDashboard() {
           )}
 
           <Box sx={{ mt: 3 }}>
+            <Typography variant="h2" mb={1.5}>Charity Challenges</Typography>
+            <FundraisingProgress compact />
+            <Button variant="text" size="small" fullWidth onClick={() => setTab('challenges')} sx={{ mt: 1 }}>
+              View All Challenges
+            </Button>
+          </Box>
+
+          <Box sx={{ mt: 3 }}>
             <Typography variant="h2" mb={1.5}>Inspiration</Typography>
             <Box sx={{ display: 'flex', gap: 1.5, overflowX: 'auto', pb: 1, '&::-webkit-scrollbar': { display: 'none' } }}>
               {popularDestinations.map(d => (
                 <Paper key={d.name} elevation={0} sx={{ minWidth: 180, borderRadius: 3, overflow: 'hidden', cursor: 'pointer' }}
-                  onClick={() => { setForm({ ...form, title: d.name, destination: d.desc }); setOpenNew(true); }}>
+                  onClick={() => { setForm({ ...form, title: d.name, destination: d.desc }); setEditId(null); setOpenNew(true); }}>
                   <Box sx={{ height: 100, backgroundImage: `url(${d.image})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
                   <Box sx={{ p: 1 }}>
                     <Typography variant="body2" fontWeight={700}>{d.name}</Typography>
@@ -244,6 +261,10 @@ export default function TravellerDashboard() {
         </>
       )}
 
+      {tab === 'challenges' && (
+        <FundraisingProgress />
+      )}
+
       {tab === 'bookings' && (
         <>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -256,19 +277,28 @@ export default function TravellerDashboard() {
               <Button variant="contained" color="primary" size="small" onClick={() => navigate('/book')}>Browse Adventures</Button>
             </Paper>
           ) : (
-            bookings.map((b, i) => (
-              <Paper key={i} elevation={0} sx={{ p: 1.5, mb: 1, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
-                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
-                  <Avatar src={guides.find(g => g.id === b.guideId)?.photo || ''} alt={b.guideName} sx={{ width: 44, height: 44 }} />
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="body2" fontWeight={700}>{b.route || 'Adventure'}</Typography>
-                    <Typography variant="caption" color="text.secondary" display="block">Guide: {b.guideName}</Typography>
-                    <Typography variant="caption" color="text.secondary">{b.date} · {b.travelers} traveler(s) · ${b.deposit} deposit</Typography>
-                  </Box>
-                  <Chip label={b.status || 'Confirmed'} size="small" color={b.status?.includes('Paid') ? 'success' : 'default'} sx={{ fontSize: 10 }} />
+            bookings.map((b, i) => {
+              const guide = allGuides.find(g => g.id === b.guideId);
+              const isFuture = b.date && new Date(b.date) >= new Date();
+              return (
+                <Box key={i} sx={{ mb: 1 }}>
+                  <Paper elevation={0} sx={{ p: 1.5, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2 }}>
+                    <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                      <Avatar src={guide?.photo || ''} alt={b.guideName} sx={{ width: 44, height: 44 }} />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" fontWeight={700}>{b.route || 'Adventure'}</Typography>
+                        <Typography variant="caption" color="text.secondary" display="block">Guide: {b.guideName}</Typography>
+                        <Typography variant="caption" color="text.secondary">{b.date} · {b.travelers} traveler(s) · ${b.deposit} deposit</Typography>
+                      </Box>
+                      <Chip label={b.status || 'Confirmed'} size="small" color={b.status?.includes('Paid') ? 'success' : 'default'} sx={{ fontSize: 10 }} />
+                    </Box>
+                  </Paper>
+                  {isFuture && (
+                    <PreTripChecklist guideName={b.guideName} destination={b.route || guide?.location || ''} />
+                  )}
                 </Box>
-              </Paper>
-            ))
+              );
+            })
           )}
         </>
       )}

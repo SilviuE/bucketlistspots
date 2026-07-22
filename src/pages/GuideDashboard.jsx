@@ -18,6 +18,7 @@ import RouteIcon from '@mui/icons-material/Route';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import UpdateFeed from '../components/UpdateFeed';
+import RewardsPanel from '../components/RewardsPanel';
 
 const statusColors = { draft: '#9E9E9E', pending: '#E9C46A', published: '#2A9D8F', featured: '#FFB800' };
 const difficulties = ['Easy', 'Moderate', 'Challenging', 'Very Challenging'];
@@ -215,6 +216,7 @@ export default function GuideDashboard() {
     { key: 'overview', label: 'Overview' },
     { key: 'routes', label: `Routes (${routes.length})` },
     { key: 'updates', label: 'Updates' },
+    { key: 'rewards', label: 'Rewards' },
     { key: 'profile', label: 'Profile' },
   ];
 
@@ -346,6 +348,13 @@ export default function GuideDashboard() {
         <Box sx={{ mb: 2 }}>
           <Typography variant="h2" mb={1.5}>Your Updates</Typography>
           <UpdateFeed userId={user?.id} showCreate />
+        </Box>
+      )}
+
+      {tab === 'rewards' && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h2" mb={1.5}>BLS Rewards</Typography>
+          <RewardsPanel />
         </Box>
       )}
 
