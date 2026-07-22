@@ -1,4 +1,4 @@
-import { Container, Typography, Paper } from '@mui/material';
+import { Container, Typography, Paper, Alert } from '@mui/material';
 import SEO from '../components/SEO';
 
 export default function Terms() {
@@ -7,6 +7,9 @@ export default function Terms() {
       <SEO title="Terms of Service" description="Terms of Service for BucketListSpots.com operated by BucketListSpots Ltd (Company No. 16595661)." path="/terms" />
       <Typography variant="h1" mb={0.5}>Terms of Service</Typography>
       <Typography variant="caption" color="text.secondary" display="block" mb={3}>Last updated: July 2026</Typography>
+      <Alert severity="warning" sx={{ mb: 2, fontSize: 12 }}>
+        <strong>Draft — pending UK travel-law review.</strong> Sections 6 and 7 are subject to confirmation by a qualified UK travel lawyer before these Terms are treated as final. The payment model described below reflects the live pricing engine but has not yet received independent legal approval.
+      </Alert>
 
       <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(16,42,67,0.12)', borderRadius: 3, '& p': { fontSize: 13, lineHeight: 1.6, mb: 1.5, color: 'text.secondary' }, '& h2': { fontSize: 15, fontWeight: 700, mt: 2.5, mb: 1, color: 'text.primary' } }}>
         <h2>1. Introduction</h2>
@@ -43,17 +46,37 @@ export default function Terms() {
 
         <h2>7. Cancellations, Refunds &amp; Grace Period</h2>
 
-        <p><strong>7.1 48-Hour Voluntary Grace Period.</strong> A Traveler may cancel a booking within 48 hours of the initial Booking Lock Payment and receive a full refund of the Booking Lock Payment, provided the trip departure date is more than 30 days away. Cancellation requests must be submitted through the Platform or by contacting hello@bucketlistspots.com. After the 48-hour grace period, the Booking Lock Payment is non-refundable.</p>
+        <p><strong>7.1 48-Hour Voluntary Grace Period.</strong> A Traveler may cancel a booking within 48 hours of the initial Booking Lock Payment and receive a full refund of the Booking Lock Payment, provided the trip departure date is more than 30 days away at the time of the cancellation request. The 30-day departure condition is subject to explicit founder approval and is disclosed prominently at checkout. Cancellation requests must be submitted through the Platform or by contacting hello@bucketlistspots.com. After the 48-hour grace period, the Booking Lock Payment is converted into a Lifetime Deposit Credit (see clause 7.5).</p>
 
-        <p><strong>7.2 Traveler Cancellation (After Grace Period).</strong> If a Traveler cancels after the 48-hour grace period, the Booking Lock Payment is non-refundable. Any Payment 2 amounts already made will be refunded in full. The Guide is not obligated to refund any amounts collected directly for trip services (e.g., park fees, permits) once those have been committed.</p>
+        <p><strong>7.2 Traveler Cancellation (After Grace Period).</strong> If a Traveler cancels after the 48-hour grace period, the Booking Lock Payment (Payment 1) is converted into a Lifetime Deposit Credit (see clause 7.5). Any Payment 2 amounts already made will be refunded in full to the original payment method. Any referral discount applied to the original booking is not carried forward to a future booking; a new referral code must be applied at the time of rebooking. The Guide is not obligated to refund any amounts collected directly for third-party trip services (e.g., park fees, permits) once those have been committed by the Guide.</p>
 
-        <p><strong>7.3 Guide Cancellation.</strong> If a Guide cancels a confirmed trip, the Traveler is entitled to a full refund of all amounts paid through the Platform, including the Booking Lock Payment and any Payment 2 amounts. The Guide may also be liable for reasonable, documented, direct costs incurred by the Traveler as a result of the cancellation (e.g., non-refundable flights), up to a maximum of the total trip price listed on the Platform.</p>
+        <p><strong>7.3 Guide Cancellation.</strong> If a Guide cancels a confirmed trip, the Traveler is entitled to a full refund of all amounts paid through the Platform, including the Booking Lock Payment (Payment 1) and any Payment 2 amounts. Refunds will be processed to the original payment method within 14 business days. Any referral discount applied to the original booking is forfeited and does not transfer to a future booking. The Guide's liability for additional direct costs (such as non-refundable flights) is a matter between the Traveler and the Guide and is not covered by BucketListSpots Ltd. Travelers are strongly advised to arrange travel insurance covering trip cancellation.</p>
 
-        <p><strong>7.4 Force Majeure.</strong> Neither party shall be liable for failure to perform where performance is prevented by circumstances beyond reasonable control, including but not limited to: natural disasters, pandemics, government-imposed travel restrictions, armed conflict, terrorism, or civil unrest. In such cases, BucketListSpots will facilitate a refund of amounts held through the Platform, and the Guide will use reasonable endeavours to assist with rebooking where possible.</p>
+        <p><strong>7.4 Force Majeure.</strong> Neither party shall be liable for failure to perform where performance is prevented by circumstances beyond reasonable control, including but not limited to: natural disasters, pandemics, government-imposed travel restrictions, armed conflict, terrorism, or civil unrest.</p>
+        <p>Where a force majeure event prevents trip delivery:</p>
+        <p>(a) <strong>Payment 1 (Booking Lock Payment):</strong> will be converted into a Lifetime Deposit Credit for the Traveler (see clause 7.5);</p>
+        <p>(b) <strong>Payment 2:</strong> any amounts already paid will be refunded in full to the original payment method within 14 business days;</p>
+        <p>(c) <strong>Referral discounts:</strong> any referral discount applied to the original booking is forfeited and does not carry forward; a new code must be applied at rebooking;</p>
+        <p>(d) <strong>Local Partner Balance:</strong> is not affected, as this amount is collected directly by the Guide and is governed by the separate trip delivery contract between the Traveler and the Guide;</p>
+        <p>(e) <strong>Statutory rights:</strong> nothing in this clause affects the Traveler's statutory rights under the Consumer Rights Act 2015, the Package Travel and Linked Travel Arrangements Regulations 2018, or any other applicable consumer protection legislation.</p>
+        <p>The Guide will use reasonable endeavours to assist with rebooking where possible. BucketListSpots Ltd will facilitate refunds and credit conversions through the Platform.</p>
 
-        <p><strong>7.5 Lifetime Deposit Credit.</strong> Where a Traveler's Booking Lock Payment is forfeited due to cancellation (after the grace period), the Traveler may be eligible for a Lifetime Deposit Credit. The Lifetime Deposit Credit allows the Traveler to apply the forfeited Booking Lock Payment toward a future booking with any Guide on the Platform, subject to conditions displayed at the time of cancellation. Lifetime Deposit Credits are non-transferable and must be used within the period specified.</p>
+        <p><strong>7.5 Lifetime Deposit Credit.</strong> Where a Traveler's Booking Lock Payment (Payment 1) is converted into a Lifetime Deposit Credit under clauses 7.1, 7.2, 7.4, or 7.6, the Traveler may apply the credit value toward a future booking with any Guide on the Platform. Lifetime Deposit Credits are subject to the following conditions:</p>
+        <p>(a) the credit must be used within 12 months of the date it was issued;</p>
+        <p>(b) the credit is non-transferable and may only be used by the original Traveler;</p>
+        <p>(c) the credit is applied toward the Platform Fee on the new booking and does not reduce the Local Partner Balance;</p>
+        <p>(d) any referral discount on the original booking does not transfer; a new referral code must be applied at the time of rebooking;</p>
+        <p>(e) the credit has no cash value and cannot be redeemed for a monetary refund;</p>
+        <p>(f) if the new booking's Platform Fee is less than the credit value, the unused portion of the credit is lost;</p>
+        <p>(g) the credit is governed by the consumer rights provisions of the Consumer Rights Act 2015 to the extent applicable.</p>
 
-        <p><strong>7.6 Payment 2 Default.</strong> If Payment 2 is not received before the trip departure date, the Guide is not obligated to proceed with the trip. In this case, the Booking Lock Payment is forfeited by the Traveler and the Guide may release the trip date for other bookings. BucketListSpots will attempt to notify the Traveler of the outstanding balance before the departure date.</p>
+        <p><strong>7.6 Payment 2 Default.</strong> If Payment 2 is not received before the trip departure date:</p>
+        <p>(a) <strong>Payment 1 (Booking Lock Payment):</strong> is converted into a Lifetime Deposit Credit for the Traveler (see clause 7.5);</p>
+        <p>(b) <strong>Trip delivery:</strong> the Guide is not obligated to proceed with the trip and may release the trip date for other bookings;</p>
+        <p>(c) <strong>Referral discounts:</strong> any referral discount applied to the original booking is forfeited and does not carry forward;</p>
+        <p>(d) <strong>Local Partner Balance:</strong> is not affected, as this amount is the Guide's responsibility to collect directly;</p>
+        <p>(e) <strong>Statutory rights:</strong> nothing in this clause affects the Traveler's statutory rights under the Consumer Rights Act 2015 or any other applicable consumer protection legislation.</p>
+        <p>BucketListSpots will attempt to notify the Traveler of the outstanding Payment 2 balance before the departure date.</p>
 
         <h2>8. Travel Insurance — Mandatory</h2>
         <p>You are <strong>required</strong> to arrange adequate travel insurance that covers high-altitude trekking (up to 6,000m), medical evacuation, and trip cancellation. BucketListSpots Ltd is <strong>not</strong> authorized or regulated by the Financial Conduct Authority (FCA) to provide financial advice or recommend specific insurance products. Any insurance links or provider names on the Platform are provided for informational purposes only ("signposting") and do not constitute advice or a recommendation.</p>
