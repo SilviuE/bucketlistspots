@@ -177,6 +177,15 @@ const validateReferral = async (code) => {
       destination: guide.location,
       referralCode: referralStatus === 'valid' ? referralCode.toUpperCase() : '',
       referralDiscount: referralStatus === 'valid' ? referralDiscount : 0,
+      termsAccepted: {
+        termsVersion: 'draft-0.3',
+        disclosureVersion: 'draft-0.3',
+        acceptedAt: new Date().toISOString(),
+        bookingRef: 'bk_' + Date.now(),
+        departureDate: date,
+        depositAmount: totalDeposit,
+        currency,
+      },
     };
     sessionStorage.setItem('pending_booking', JSON.stringify(pendingBooking));
 
@@ -476,7 +485,7 @@ const validateReferral = async (code) => {
           </Alert>
 
           <Alert severity="warning" sx={{ mb: 2, borderRadius: 2, fontSize: 11 }}>
-            <strong>Cancellation:</strong> The 48-hour grace period applies only if your trip departs in more than 30 days (subject to founder approval). After the grace period, your Booking Lock Payment converts into a Lifetime Deposit Credit — it is not refunded. See Terms section 7 for full details.
+            <strong>Cancellation:</strong> You may cancel within 48 hours for a full monetary refund of your Booking Lock Payment. After the grace period, the Booking Lock Payment converts into a Deposit Credit for future use (non-refundable, 12-month expiry). Payment 2 is refunded in full if not yet paid. See Terms sections 6 and 7 for full details.
           </Alert>
 
           <Box sx={{ p: 2, mb: 2, bgcolor: '#FFF', borderRadius: 2, border: '1px solid rgba(16,42,67,0.12)', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
