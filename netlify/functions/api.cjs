@@ -1,6 +1,20 @@
 const { createClient } = require('@supabase/supabase-js');
 const Stripe = require('stripe');
 
+// ─── Rate Limiting Architecture ────────────────────────────────────────
+// LAYER 1 (Primary): Netlify-native rate limiting (exports.config below)
+//   - Platform-enforced, survives cold starts and function scaling
+//   - 120 req/min per IP, blanket protection for all /api/* routes
+//   - Returns HTTP 429 before the function code executes
+//
+// LAYER 2 (Secondary): In-memory Map (per-route granularity)
+//   - Finer-grained limits: 30/min pricing, 5/15min applications
+//   - Resets on cold start (acceptable as defence-in-depth)
+//   - Catches per-route abuse that the blanket limit would miss
+//
+// Before paid traffic: Add Cloudflare or CDN edge rate limiting
+// as LAYER 0 (outermost) for DDoS and bot protection.
+
 function headers(cors) {
   return {
     'Access-Control-Allow-Origin': '*',
@@ -1609,4 +1623,16 @@ exports.handler = async (event) => {
     default:
       return json({ error: 'Not found' }, 404);
   }
+};
+
+// ─── Netlify-native rate limiting (platform-enforced, survives cold starts) ──
+// This is the PRIMARY rate limit — enforced by Netlify before the function runs.
+// The in-memory Map above is SECONDARY defence-in-depth for per-route granularity.
+exports.config = {
+  path: '/api/*',
+  rateLimit: {
+    windowLimit: 120,    // 120 requests per window
+    windowSize: 60,      // per 60 seconds
+    aggregateBy: ['ip'], // per client IP
+  },
 };

@@ -472,7 +472,7 @@ const validateReferral = async (code) => {
           </Box>
 
           <Alert severity="info" sx={{ mb: 2, borderRadius: 2, fontSize: 12 }}>
-            BucketListSpots Ltd acts solely as a disclosed booking agent (Company No. 16595661). Your contract for the trip is directly with {guide.name}. Your deposit is processed securely via Stripe.
+            BucketListSpots Ltd acts solely as a disclosed booking agent (Company No. 16595661). Your contract for the trip delivery is directly with {guide.name}. Your Booking Lock Payment is processed securely via Stripe. The remaining Platform Fee Balance is due before departure — see Terms sections 6 and 7.
           </Alert>
 
           <Box sx={{ p: 2, mb: 2, bgcolor: '#FFF', borderRadius: 2, border: '1px solid rgba(16,42,67,0.12)', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
@@ -483,7 +483,7 @@ const validateReferral = async (code) => {
             </Box>
             <Typography variant="caption" color="text.secondary">
               <strong>I acknowledge</strong> that I have read and accept the{'\n'}
-              <strong>BucketListSpots Terms of Use</strong> and{'\n'}
+              <strong>BucketListSpots Terms of Service</strong> (including sections 6 and 7 on payments, cancellations, and the 48-hour grace period) and{'\n'}
               <strong>{guide.name}'s Booking Conditions</strong>.
             </Typography>
           </Box>

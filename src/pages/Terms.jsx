@@ -23,15 +23,37 @@ export default function Terms() {
         <h2>4. Accounts</h2>
         <p>You must be 18 or older to create an account. You are responsible for maintaining the confidentiality of your login credentials. You agree to provide accurate, current information and to update it as needed.</p>
 
-        <h2>5. Guide Listings & Bookings</h2>
-        <p>Guides are independent operators, not employees or contractors of BucketListSpots Ltd. We verify identity, licensing, and safety credentials but make no guarantees about the quality of any Guide's service. Travelers book directly with Guides. BucketListSpots facilitates the deposit payment and connection.</p>
+        <h2>5. Guide Listings &amp; Bookings</h2>
+        <p>Guides are independent operators, not employees or contractors of BucketListSpots Ltd. We verify identity, licensing, and safety credentials through our Trust Gate process but make no guarantees about the quality of any Guide's service. Travelers book directly with Guides through the Platform. BucketListSpots facilitates the booking connection and collects the Platform Fee. The contract for trip delivery is solely between the Traveler and the Guide.</p>
 
         <h2>6. Payments</h2>
-        <p>Travelers pay a 20% non-refundable deposit at booking via Stripe. This deposit serves as BucketListSpots' commission. The remaining 80% balance is paid directly to the Guide by the Traveler. All payments are processed securely by Stripe. We do not store full credit card details.</p>
-        <p>BucketListSpots Ltd does <strong>not</strong> hold or process the full trip balance. The 80% balance is the Guide's responsibility to collect directly from the Traveler.</p>
+        <p>BucketListSpots Ltd acts as a booking agent and collects a Platform Fee on behalf of itself. The trip delivery contract is between the Traveler and the Guide. All payment processing is handled securely by Stripe. We do not store full credit card details.</p>
 
-        <h2>7. Cancellations & Refunds</h2>
-        <p>Cancellation policies are set by each Guide and displayed on their profile. If a Guide cancels, the Traveler is entitled to a full refund of the deposit. If a Traveler cancels, the deposit is non-refundable unless otherwise stated by the Guide. Disputes should first be raised with the Guide. If unresolved, contact hello@bucketlistspots.com.</p>
+        <p><strong>6.1 Promotional Booking Lock Payment (Payment 1).</strong> During promotional periods, when a Traveler confirms a booking, BucketListSpots collects a fixed Booking Lock Payment of £50, &euro;50, or US$50 (depending on the booking currency). This amount is credited toward the total Platform Fee. The promotional Booking Lock Payment is available only while the promotional period is active, as indicated on the Platform.</p>
+
+        <p><strong>6.2 Platform Fee Balance (Payment 2).</strong> The remaining balance of the Platform Fee (the total Platform Fee minus any Booking Lock Payment already made) is due from the Traveler before the trip departure date. Payment 2 is paid directly to the Guide, who holds it on behalf of BucketListSpots until the trip is completed, at which point it is released to the Guide as their Local Partner Balance. The Platform Fee Balance must be settled before the Guide is obligated to confirm the trip date.</p>
+
+        <p><strong>6.3 Full Platform Fee.</strong> For bookings made outside a promotional period, or where Payment 2 is not received before the departure date, the full Platform Fee (currently 20% of the listed trip price) is due. The Platform Fee percentage is displayed at the time of booking and may change for future bookings.</p>
+
+        <p><strong>6.4 Local Partner Balance.</strong> The Local Partner Balance (currently 80% of the listed trip price) represents the Guide's trip delivery fee. This amount is the Guide's responsibility to collect and is not held or processed by BucketListSpots Ltd. The Guide's obligation to deliver the trip is contractual with the Traveler and is independent of BucketListSpots' role as booking agent.</p>
+
+        <p><strong>6.5 Referral Discounts.</strong> Where a valid referral or Scout code is applied, the discount reduces only the Platform Fee payable to BucketListSpots. Referral discounts do not reduce the Local Partner Balance. Referral discounts are subject to maximum limits displayed at the time of booking.</p>
+
+        <p><strong>6.6 Currency.</strong> All amounts are displayed and charged in the currency shown at the time of booking (GBP, EUR, or USD). BucketListSpots is not responsible for exchange rate fluctuations between the booking currency and the currency in which the Guide receives payment.</p>
+
+        <h2>7. Cancellations, Refunds &amp; Grace Period</h2>
+
+        <p><strong>7.1 48-Hour Voluntary Grace Period.</strong> A Traveler may cancel a booking within 48 hours of the initial Booking Lock Payment and receive a full refund of the Booking Lock Payment, provided the trip departure date is more than 30 days away. Cancellation requests must be submitted through the Platform or by contacting hello@bucketlistspots.com. After the 48-hour grace period, the Booking Lock Payment is non-refundable.</p>
+
+        <p><strong>7.2 Traveler Cancellation (After Grace Period).</strong> If a Traveler cancels after the 48-hour grace period, the Booking Lock Payment is non-refundable. Any Payment 2 amounts already made will be refunded in full. The Guide is not obligated to refund any amounts collected directly for trip services (e.g., park fees, permits) once those have been committed.</p>
+
+        <p><strong>7.3 Guide Cancellation.</strong> If a Guide cancels a confirmed trip, the Traveler is entitled to a full refund of all amounts paid through the Platform, including the Booking Lock Payment and any Payment 2 amounts. The Guide may also be liable for reasonable, documented, direct costs incurred by the Traveler as a result of the cancellation (e.g., non-refundable flights), up to a maximum of the total trip price listed on the Platform.</p>
+
+        <p><strong>7.4 Force Majeure.</strong> Neither party shall be liable for failure to perform where performance is prevented by circumstances beyond reasonable control, including but not limited to: natural disasters, pandemics, government-imposed travel restrictions, armed conflict, terrorism, or civil unrest. In such cases, BucketListSpots will facilitate a refund of amounts held through the Platform, and the Guide will use reasonable endeavours to assist with rebooking where possible.</p>
+
+        <p><strong>7.5 Lifetime Deposit Credit.</strong> Where a Traveler's Booking Lock Payment is forfeited due to cancellation (after the grace period), the Traveler may be eligible for a Lifetime Deposit Credit. The Lifetime Deposit Credit allows the Traveler to apply the forfeited Booking Lock Payment toward a future booking with any Guide on the Platform, subject to conditions displayed at the time of cancellation. Lifetime Deposit Credits are non-transferable and must be used within the period specified.</p>
+
+        <p><strong>7.6 Payment 2 Default.</strong> If Payment 2 is not received before the trip departure date, the Guide is not obligated to proceed with the trip. In this case, the Booking Lock Payment is forfeited by the Traveler and the Guide may release the trip date for other bookings. BucketListSpots will attempt to notify the Traveler of the outstanding balance before the departure date.</p>
 
         <h2>8. Travel Insurance — Mandatory</h2>
         <p>You are <strong>required</strong> to arrange adequate travel insurance that covers high-altitude trekking (up to 6,000m), medical evacuation, and trip cancellation. BucketListSpots Ltd is <strong>not</strong> authorized or regulated by the Financial Conduct Authority (FCA) to provide financial advice or recommend specific insurance products. Any insurance links or provider names on the Platform are provided for informational purposes only ("signposting") and do not constitute advice or a recommendation.</p>
@@ -53,7 +75,7 @@ export default function Terms() {
         <p>This Platform contains links to third-party websites and services. Some of these links may be affiliate links, meaning BucketListSpots Ltd may earn a commission if you make a purchase, at no extra cost to you. We have no control over, and assume no responsibility for, the content, privacy policies, or practices of any third-party websites or services.</p>
 
         <h2>14. Limitation of Liability</h2>
-        <p>BucketListSpots Ltd acts as a marketplace intermediary. We are not liable for: (a) the conduct of any Guide or Traveler; (b) accidents, injuries, or losses during booked experiences; (c) indirect or consequential damages. Our total liability is limited to the deposit amount paid.</p>
+        <p>BucketListSpots Ltd acts as a marketplace intermediary and booking agent. We are not liable for: (a) the conduct of any Guide or Traveler; (b) accidents, injuries, or losses during booked experiences; (c) the Guide's failure to deliver the trip; (d) indirect or consequential damages. Our total aggregate liability under or in connection with these Terms is limited to the total Platform Fee amounts collected by BucketListSpots in relation to the booking in question.</p>
 
         <h2>15. Termination</h2>
         <p>We reserve the right to suspend or terminate accounts that violate these Terms, at our sole discretion. You may delete your account at any time by contacting us.</p>
