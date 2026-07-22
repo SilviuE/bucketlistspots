@@ -373,7 +373,7 @@ async function handleApplications(event) {
   if (adminRole !== 'admin') return json({ error: `Forbidden: admin access required (role: "${adminRole}")` }, 403);
 
   if (event.httpMethod === 'GET') {
-    const type = new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
+    const type = event.queryStringParameters?.type || new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
 
     const fetchTable = async (table, typeLabel) => {
       const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false });
@@ -621,8 +621,7 @@ const { getCharity, createFundraisingPage, getFundraisingPage, simulateDonation,
 async function handleCharities(event) {
   if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
   try {
-    const url = new URL(event.url, 'http://localhost');
-    const destination = url.searchParams.get('destination');
+    const destination = event.queryStringParameters?.destination || new URL(event.url, 'http://localhost').searchParams.get('destination');
     if (!destination) return json({ error: 'Missing destination parameter' }, 400);
 
     const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
