@@ -1281,7 +1281,8 @@ async function handlePricingPreview(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
     const { tripPrice, currency, travelers, referralCode, porterTraining } = reqBody(event);
-    if (!tripPrice || parseFloat(tripPrice) <= 0) return json({ error: 'tripPrice must be a positive number' }, 400);
+    const parsedPrice = parseFloat(tripPrice);
+    if (!tripPrice || isNaN(parsedPrice) || parsedPrice <= 0) return json({ error: 'tripPrice must be a positive number' }, 400);
     const allowedCurrencies = ['gbp', 'eur', 'usd'];
     const cur = (currency || 'usd').toLowerCase();
     if (!allowedCurrencies.includes(cur)) return json({ error: `Unsupported currency. Allowed: ${allowedCurrencies.join(', ')}` }, 400);
