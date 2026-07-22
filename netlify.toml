@@ -9,6 +9,16 @@
   status = 200
 
 [[redirects]]
+  from = "/guides"
+  to = "/for-guides"
+  status = 301
+
+[[redirects]]
+  from = "/ambassador"
+  to = "/ambassadors"
+  status = 301
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

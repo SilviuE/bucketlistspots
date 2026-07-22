@@ -77,7 +77,7 @@ export default function BecomeAmbassador() {
         <SEO
           title="Ambassador Program"
           description="Join the BucketListSpots Ambassador Program. Earn commissions, grow your brand, and get free travel perks. Apply now."
-          path="/ambassador"
+          path="/ambassadors"
         />
         <Typography variant="h1" sx={{ color: '#FFFFFF', mb: 1, fontSize: { xs: '26px', sm: '32px' } }}>
           Become an Ambassador
@@ -147,7 +147,7 @@ export default function BecomeAmbassador() {
 
         <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)', display: 'block', textAlign: 'center', mt: 2 }}>
           Already have an account? <Link to="/auth" style={{ color: '#2A9D8F' }}>Sign in</Link> · 
-          Want to become a guide? <Link to="/guides" style={{ color: '#2A9D8F' }}>Learn more</Link>
+          Want to become a guide? <Link to="/for-guides" style={{ color: '#2A9D8F' }}>Learn more</Link>
         </Typography>
       </Container>
     </Box>

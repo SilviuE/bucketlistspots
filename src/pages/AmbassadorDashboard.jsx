@@ -41,7 +41,7 @@ export default function AmbassadorDashboard() {
           <Typography variant="body2" color="text.secondary" mb={2}>
             You need an ambassador account to access this page.
           </Typography>
-          <Button variant="contained" color="primary" onClick={() => navigate('/ambassador')}>
+          <Button variant="contained" color="primary" onClick={() => navigate('/ambassadors')}>
             Apply to become an Ambassador
           </Button>
         </Paper>

@@ -105,37 +105,114 @@ function calculateReferralDiscount({ currency, grossPlatformFee, eligiblePlatfor
   return Math.max(0, Math.min(flatDiscount, percentageCap, cap));
 }
 
+// ─── Unified Pricing Engine (Spec v2.0) ───────────────────────────────
+// calculateBookingPrice() is the SINGLE source of truth for all pricing.
+// Used by: /api/pricing-preview, /api/validate-referral, /api/create-checkout,
+//          Payment 2, guide calculator, traveller calculator, Scout examples.
+async function calculateBookingPrice({ tripPrice, currency, travelers, referralCode, porterTraining }) {
+  const config = await getPlatformConfig();
+  const cur = (currency || 'usd').toLowerCase();
+  const platformFeePct = Number(config.promotional_commission_pct); // Active rate: 20%
+  const travelersCount = Math.max(1, parseInt(travelers) || 1);
+  const price = Math.max(0, parseFloat(tripPrice) || 0);
+
+  // Core split (per person)
+  const grossPlatformFee = roundCurrency(price * platformFeePct);
+  const localPartnerBalance = roundCurrency(price - grossPlatformFee);
+
+  // Totals
+  const totalTrip = roundCurrency(price * travelersCount);
+  const totalGrossPlatformFee = roundCurrency(grossPlatformFee * travelersCount);
+  const totalLocalPartnerBalance = roundCurrency(localPartnerBalance * travelersCount);
+
+  // Deposit = 20% of trip price per person
+  const bookingLockPerPerson = roundCurrency(price * 0.20);
+  const platformFeeBalancePerPerson = roundCurrency(Math.max(0, grossPlatformFee - bookingLockPerPerson));
+  const totalBookingLock = roundCurrency(bookingLockPerPerson * travelersCount);
+  const totalPlatformFeeBalance = roundCurrency(platformFeeBalancePerPerson * travelersCount);
+
+  // Referral discount
+  let effectiveReferralDiscount = 0;
+  let referralDetails = null;
+  if (referralCode) {
+    effectiveReferralDiscount = calculateReferralDiscount({
+      currency: cur,
+      grossPlatformFee: totalGrossPlatformFee,
+      eligiblePlatformFeeRemaining: totalGrossPlatformFee,
+    });
+    referralDetails = { code: referralCode, discountAmount: effectiveReferralDiscount };
+  }
+
+  // Final deposit
+  const porterTrainingAmount = porterTraining ? 10 : 0;
+  const discountedBookingLock = Math.max(0, roundCurrency(totalBookingLock - effectiveReferralDiscount));
+  const finalDeposit = roundCurrency(discountedBookingLock + porterTrainingAmount);
+
+  // Promotional status
+  const now = new Date();
+  const promoEnd = config.promotional_end_date ? new Date(config.promotional_end_date) : null;
+  const promotionActive = !promoEnd || now < promoEnd;
+
+  // Founding Guide status (explicit dates, not duration-based)
+  const fgStart = config.founding_guide_start_at ? new Date(config.founding_guide_start_at) : null;
+  const fgEnd = config.founding_guide_end_at ? new Date(config.founding_guide_end_at) : null;
+  const foundingGuideActive = config.founding_guide_is_active === true && fgStart && fgEnd && now >= fgStart && now <= fgEnd;
+
+  return {
+    currency: cur,
+    listedTripPrice: price,
+    travelers: travelersCount,
+    platformFeePercentage: platformFeePct * 100,
+    localPartnerPercentage: (1 - platformFeePct) * 100,
+    grossPlatformFee,
+    totalGrossPlatformFee,
+    localPartnerBalance,
+    totalLocalPartnerBalance,
+    bookingLockPerPerson,
+    platformFeeBalancePerPerson,
+    totalBookingLock,
+    totalPlatformFeeBalance,
+    effectiveReferralDiscount,
+    porterTrainingAmount,
+    discountedBookingLock,
+    finalDeposit,
+    promotionActive,
+    promotionEndDate: config.promotional_end_date || null,
+    foundingGuideActive,
+    foundingGuideStartAt: config.founding_guide_start_at || null,
+    foundingGuideEndAt: config.founding_guide_end_at || null,
+    referralDetails,
+    calculationVersion: '2.0',
+  };
+}
+
 // ─── Stripe Checkout ──────────────────────────────────────────────────
 async function handleStripe(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-    const { routeName, guideName, guideId, price, travelers, depositAmount, guestName, guestEmail, date, currency, referralCode } = reqBody(event);
+    const { routeName, guideName, guideId, price, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining } = reqBody(event);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
-    const platformFeePct = await getCurrentPlatformFeePct();
 
-    let finalDeposit = depositAmount;
+    // Use unified pricing engine
+    const pricing = await calculateBookingPrice({
+      tripPrice: price,
+      currency: currency || 'usd',
+      travelers: travelers || 1,
+      referralCode: referralCode || null,
+      porterTraining: porterTraining || false,
+    });
+
+    let finalDeposit = pricing.finalDeposit;
     let appliedReferral = null;
 
-    // Validate referral code if provided
-    if (referralCode) {
+    // Validate referral code for Stripe metadata
+    if (referralCode && pricing.effectiveReferralDiscount > 0) {
       const referrer = await findReferralByCode(referralCode);
       if (referrer) {
-        // Prevent self-referral (guides cannot use their own code)
         const referrerGuideId = referrer.role === 'guide' ? referrer.id : null;
         if (referrerGuideId !== guideId) {
-          // Calculate effective discount using pricing engine
-          const grossPlatformFee = price * platformFeePct;
-          const eligibleRemaining = grossPlatformFee; // Full fee eligible at checkout
-          const effectiveDiscount = calculateReferralDiscount({
-            currency: currency || 'usd',
-            grossPlatformFee,
-            eligiblePlatformFeeRemaining: eligibleRemaining,
-          });
-          const discountCents = Math.round(effectiveDiscount * 100);
-          const depositCents = depositAmount * 100;
-          finalDeposit = Math.max(0, (depositCents - discountCents)) / 100;
-          appliedReferral = { code: referralCode, referrerUserId: referrer.user_id || referrer.id, discountAmount: effectiveDiscount };
+          appliedReferral = { code: referralCode, referrerUserId: referrer.user_id || referrer.id, discountAmount: pricing.effectiveReferralDiscount };
         }
       }
     }
@@ -160,16 +237,17 @@ async function handleStripe(event) {
         referralCode: appliedReferral?.code || '',
         referrerUserId: appliedReferral?.referrerUserId || '',
         discountAmount: String(appliedReferral?.discountAmount || 0),
-        presentmentCurrency: (currency || 'usd').toLowerCase(),
+        presentmentCurrency: pricing.currency,
         presentmentAmount: String(finalDeposit),
-        grossPlatformFee: String(price * platformFeePct),
-        platformFeePct: String(platformFeePct),
+        grossPlatformFee: String(pricing.grossPlatformFee),
+        platformFeePct: String(pricing.platformFeePercentage / 100),
+        calculationVersion: pricing.calculationVersion,
       },
       success_url: `${origin}/checkout/${guideId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout/${guideId}?payment=cancel`,
     });
 
-    return json({ url: session.url, depositAmount: finalDeposit, discountAmount: appliedReferral?.discountAmount || 0 });
+    return json({ url: session.url, depositAmount: finalDeposit, discountAmount: appliedReferral?.discountAmount || 0, calculationVersion: pricing.calculationVersion });
   } catch (err) {
     return json({ error: err.message }, 500);
   }
@@ -204,32 +282,32 @@ async function handleValidateReferral(event) {
 
     const cur = (currency || 'usd').toLowerCase();
     const advertisedMax = REFERRAL_FLAT_DISCOUNT[cur] || REFERRAL_FLAT_DISCOUNT.usd;
-    const platformFeePct = await getCurrentPlatformFeePct();
-    const grossPlatformFee = (price || 0) * platformFeePct;
-    const percentageCap = roundCurrency(grossPlatformFee * REFERRAL_DISCOUNT_CAP_PCT, cur);
-    const effectiveDiscount = calculateReferralDiscount({
+
+    // Use unified pricing engine
+    const pricing = await calculateBookingPrice({
+      tripPrice: price || 0,
       currency: cur,
-      grossPlatformFee,
-      eligiblePlatformFeeRemaining: grossPlatformFee,
+      travelers: 1,
+      referralCode: code.toUpperCase(),
     });
 
     return json({
       valid: true,
       code: code.toUpperCase(),
       currency: cur,
-      platformFeePct,
+      platformFeePct: pricing.platformFeePercentage / 100,
       advertisedMaximumDiscount: advertisedMax,
       percentageCap: REFERRAL_DISCOUNT_CAP_PCT,
-      percentageCapAmount: percentageCap,
-      effectiveDiscount,
+      percentageCapAmount: roundCurrency(pricing.grossPlatformFee * REFERRAL_DISCOUNT_CAP_PCT),
+      effectiveDiscount: pricing.effectiveReferralDiscount,
       appliesTo: 'platform_fee_balance',
       localPartnerBalanceAffected: false,
       referrerName: referrer.trading_name || referrer.name || 'Referrer',
       referrerRole: referrer.role,
-      // Legacy field for backwards compat
-      discountAmount: effectiveDiscount,
-      message: effectiveDiscount < advertisedMax
-        ? `Your code gives you ${cur === 'gbp' ? '£' : cur === 'eur' ? '€' : '$'}${effectiveDiscount} off this booking.`
+      discountAmount: pricing.effectiveReferralDiscount,
+      calculationVersion: pricing.calculationVersion,
+      message: pricing.effectiveReferralDiscount < advertisedMax
+        ? `Your code gives you ${cur === 'gbp' ? '£' : cur === 'eur' ? '€' : '$'}${pricing.effectiveReferralDiscount} off this booking.`
         : `Your code gives you up to ${cur === 'gbp' ? '£' : cur === 'eur' ? '€' : '$'}${advertisedMax} off this booking.`,
     });
   } catch (err) {
@@ -1197,6 +1275,117 @@ async function handleAdminPlatformConfig(event) {
   }
 }
 
+// ─── Public Pricing Preview ───────────────────────────────────────────
+// POST /api/pricing-preview — display-only calculator, no auth required
+async function handlePricingPreview(event) {
+  if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  try {
+    const { tripPrice, currency, travelers, referralCode, porterTraining } = reqBody(event);
+    if (!tripPrice || parseFloat(tripPrice) <= 0) return json({ error: 'tripPrice must be a positive number' }, 400);
+    const allowedCurrencies = ['gbp', 'eur', 'usd'];
+    const cur = (currency || 'usd').toLowerCase();
+    if (!allowedCurrencies.includes(cur)) return json({ error: `Unsupported currency. Allowed: ${allowedCurrencies.join(', ')}` }, 400);
+
+    const pricing = await calculateBookingPrice({
+      tripPrice, currency: cur, travelers, referralCode: referralCode || null, porterTraining: porterTraining || false,
+    });
+
+    return json({
+      currency: pricing.currency,
+      listedTripPrice: pricing.listedTripPrice,
+      travelers: pricing.travelers,
+      platformFeePercentage: pricing.platformFeePercentage,
+      localPartnerPercentage: pricing.localPartnerPercentage,
+      grossPlatformFee: pricing.grossPlatformFee,
+      totalGrossPlatformFee: pricing.totalGrossPlatformFee,
+      localPartnerBalance: pricing.localPartnerBalance,
+      totalLocalPartnerBalance: pricing.totalLocalPartnerBalance,
+      bookingLockPerPerson: pricing.bookingLockPerPerson,
+      platformFeeBalancePerPerson: pricing.platformFeeBalancePerPerson,
+      totalBookingLock: pricing.totalBookingLock,
+      totalPlatformFeeBalance: pricing.totalPlatformFeeBalance,
+      effectiveReferralDiscount: pricing.effectiveReferralDiscount,
+      porterTrainingAmount: pricing.porterTrainingAmount,
+      discountedBookingLock: pricing.discountedBookingLock,
+      finalDeposit: pricing.finalDeposit,
+      promotionActive: pricing.promotionActive,
+      promotionEndDate: pricing.promotionEndDate,
+      foundingGuideActive: pricing.foundingGuideActive,
+      foundingGuideStartAt: pricing.foundingGuideStartAt,
+      foundingGuideEndAt: pricing.foundingGuideEndAt,
+      calculationVersion: pricing.calculationVersion,
+    });
+  } catch (err) {
+    return json({ error: err.message }, 500);
+  }
+}
+
+// ─── Public Platform Settings (allowlisted) ───────────────────────────
+// GET /api/public-platform-settings — safe subset for marketing pages
+async function handlePublicPlatformSettings(event) {
+  if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  try {
+    const config = await getPlatformConfig();
+    const now = new Date();
+    const promoEnd = config.promotional_end_date ? new Date(config.promotional_end_date) : null;
+    const promotionActive = !promoEnd || now < promoEnd;
+
+    const fgStart = config.founding_guide_start_at ? new Date(config.founding_guide_start_at) : null;
+    const fgEnd = config.founding_guide_end_at ? new Date(config.founding_guide_end_at) : null;
+    const foundingGuideActive = config.founding_guide_is_active === true && fgStart && fgEnd && now >= fgStart && now <= fgEnd;
+
+    return json({
+      platformFeePercentage: Number(config.promotional_commission_pct) * 100,
+      localPartnerPercentage: (1 - Number(config.promotional_commission_pct)) * 100,
+      promotionActive,
+      promotionEndDate: config.promotional_end_date || null,
+      referralMaximums: {
+        GBP: Number(config.referral_max_gbp) || 50,
+        EUR: Number(config.referral_max_eur) || 50,
+        USD: Number(config.referral_max_usd) || 50,
+      },
+      referralCapPercentage: Number(config.referral_cap_pct) * 100 || 15,
+      guideStatusNames: config.guide_status_names || ['Standard Guide', 'Professional Guide', 'Expert Guide', 'Elite Guide'],
+      globalPricingZonesEnabled: config.global_pricing_zones_enabled !== false,
+      globalPricingZonesCopy: config.global_pricing_zones_public_copy || '',
+      globalPricingZoneNames: config.global_pricing_zone_names || ['Global Zone A', 'Global Zone B', 'Global Zone C'],
+      foundingGuideActive,
+      foundingGuideStartAt: config.founding_guide_start_at || null,
+      foundingGuideEndAt: config.founding_guide_end_at || null,
+      foundingGuideCopy: config.founding_guide_copy || '',
+      trustGateChecks: config.trust_gate_checks || [],
+    });
+  } catch (err) {
+    return json({ error: err.message }, 500);
+  }
+}
+
+// ─── Public Testimonials ──────────────────────────────────────────────
+// GET /api/public-testimonials?page=/for-guides — approved, published, consented
+async function handlePublicTestimonials(event) {
+  if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  try {
+    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const page = event.queryStringParameters?.page || null;
+
+    let query = sr.from('testimonials')
+      .select('id, person_name, display_name, role, relationship_to_bls, country, destination, testimonial_text, date_given, photo_url, is_featured')
+      .eq('consent_status', 'granted')
+      .eq('approval_status', 'approved')
+      .eq('is_published', true);
+
+    if (page) query = query.or(`page.eq.${page},page.is.null`);
+    query = query.order('is_featured', { ascending: false }).order('date_given', { ascending: false }).limit(10);
+
+    const { data, error } = await query;
+    if (error) return json({ error: error.message }, 500);
+
+    return json({ testimonials: data || [] });
+  } catch (err) {
+    return json({ error: err.message }, 500);
+  }
+}
+
 // ─── Main Router ──────────────────────────────────────────────────────
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json({ ok: true });
@@ -1246,6 +1435,12 @@ exports.handler = async (event) => {
       if (adminPath[1] === 'payment-reports') return handleAdminPaymentReports(event);
       if (adminPath[1] === 'platform-config') return handleAdminPlatformConfig(event);
       return json({ error: 'Not found' }, 404);
+    case 'pricing-preview':
+      return handlePricingPreview(event);
+    case 'public-platform-settings':
+      return handlePublicPlatformSettings(event);
+    case 'public-testimonials':
+      return handlePublicTestimonials(event);
     default:
       return json({ error: 'Not found' }, 404);
   }

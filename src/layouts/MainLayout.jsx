@@ -106,7 +106,7 @@ export default function MainLayout() {
           <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/terms">Terms</Typography>
           <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/privacy">Privacy</Typography>
           <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/news">News</Typography>
-          <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/ambassador">Ambassadors</Typography>
+          <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="/ambassadors">Ambassadors</Typography>
           <Typography variant="caption" sx={{ cursor: 'pointer', '&:hover': { color: '#2A9D8F' }, color: 'text.disabled', textDecoration: 'none' }} component="a" href="mailto:hello@bucketlistspots.com">Contact</Typography>
         </Box>
       </Box>

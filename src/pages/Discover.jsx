@@ -120,7 +120,7 @@ export default function Discover() {
           <Typography sx={{ color: 'rgba(255,255,255,0.8)', fontSize: 14, mb: 2 }}>
             Get a professional website, booking system, and global visibility.
           </Typography>
-          <Button variant="contained" color="primary" size="large" href="/guides">
+          <Button variant="contained" color="primary" size="large" href="/for-guides">
             Join as a Guide
           </Button>
         </Box>

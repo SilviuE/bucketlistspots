@@ -28,9 +28,9 @@ export default function App() {
         <Route path="/book" element={<BookNow />} />
         <Route path="/bucketlist" element={<BucketList />} />
         <Route path="/trust" element={<TrustHub />} />
-        <Route path="/guides" element={<ForGuides />} />
+        <Route path="/for-guides" element={<ForGuides />} />
         <Route path="/become-a-guide" element={<BecomeGuide />} />
-        <Route path="/ambassador" element={<BecomeAmbassador />} />
+        <Route path="/ambassadors" element={<BecomeAmbassador />} />
         <Route path="/admin/applications" element={<AdminApplications />} />
         <Route path="/admin/payment-reports" element={<AdminPaymentReports />} />
         <Route path="/guide/:id" element={<GuideProfile />} />
