@@ -131,6 +131,11 @@ export default function GuideApplicationForm({ embedded = false, onSuccess }) {
 
       <TextField fullWidth size="small" label="Referral or Scout Code (optional)" value={form.referralCode} onChange={update('referralCode')} sx={sx} />
 
+      {/* Honeypot — hidden from humans, bots will fill it */}
+      <Box sx={{ position: 'absolute', left: '-9999px', opacity: 0, height: 0, overflow: 'hidden' }} aria-hidden="true">
+        <TextField tabIndex={-1} autoComplete="off" label="Fax Number" value={form.faxNumber || ''} onChange={update('faxNumber')} />
+      </Box>
+
       <FormControlLabel
         control={<Checkbox checked={form.consentGiven} onChange={update('consentGiven')} size="small" />}
         sx={{ mb: 1.5 }}

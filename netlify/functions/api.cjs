@@ -14,7 +14,14 @@ function json(body, status = 200) {
 }
 
 function reqBody(event) {
-  return JSON.parse(event.body);
+  if (event.body && event.body.length > MAX_REQUEST_BODY) {
+    throw new Error('Request body too large');
+  }
+  try {
+    return JSON.parse(event.body);
+  } catch {
+    throw new Error('Invalid JSON');
+  }
 }
 
 function jwtDecode(token) {
@@ -43,9 +50,38 @@ async function authUser(event) {
 }
 
 // ─── Pricing Engine (Spec v1.4) ───────────────────────────────────────
-// Configurable flat referral discounts per currency
+const MAX_LISTED_TRIP_PRICE = 100000; // Configurable upper limit (GBP/EUR/USD)
 const REFERRAL_FLAT_DISCOUNT = { gbp: 50, eur: 50, usd: 50 };
 const REFERRAL_DISCOUNT_CAP_PCT = 0.15; // 15% of gross BLS Platform Fee
+
+// ─── Public Endpoint Abuse Controls ───────────────────────────────────
+// In-memory rate limiter (resets on cold start — acceptable for basic abuse control)
+const _rateBuckets = new Map();
+function rateLimit(key, maxRequests, windowMs) {
+  const now = Date.now();
+  const bucket = _rateBuckets.get(key);
+  if (!bucket || now - bucket.start > windowMs) {
+    _rateBuckets.set(key, { start: now, count: 1 });
+    return false;
+  }
+  bucket.count++;
+  return bucket.count > maxRequests;
+}
+// Evict stale buckets every 5 minutes to prevent memory leak
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _rateBuckets) {
+    if (now - v.start > 10 * 60 * 1000) _rateBuckets.delete(k);
+  }
+}, 5 * 60 * 1000);
+
+const MAX_REQUEST_BODY = 16384; // 16KB max request body
+
+// Safe logging — strip PII
+function safeLog(route, event, extra) {
+  const ip = event.headers?.['x-forwarded-for'] || event.headers?.['client-ip'] || 'unknown';
+  console.log(JSON.stringify({ route, ip, method: event.httpMethod, ts: new Date().toISOString(), ...extra }));
+}
 
 // Platform config cache (refreshed every 5 minutes from DB)
 let _platformConfig = null;
@@ -493,29 +529,86 @@ async function generateReferralCode(user, table, name, sr) {
 }
 
 // ─── Guide Application ────────────────────────────────────────────────
+const FIELD_LIMITS = {
+  fullName: 200, email: 254, phone: 30, country: 100,
+  languages: 500, specialties: 500, message: 2000, heardFrom: 200,
+};
+
 async function handleApplyGuide(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
+
+  // Rate limit: 5 applications per 15 minutes per IP
+  const ip = event.headers?.['x-forwarded-for'] || event.headers?.['client-ip'] || 'anon';
+  if (rateLimit(`ag:${ip}`, 5, 15 * 60000)) {
+    safeLog('apply-guide', event, { blocked: 'rate_limit' });
+    return json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   try {
-    const { fullName, email, phone, country, experience, languages, specialties, message, heardFrom, referredByAmbassadorCode } = reqBody(event);
+    const body = reqBody(event);
+
+    // Honeypot: if bot fills hidden field, silently succeed
+    if (body.faxNumber) {
+      safeLog('apply-guide', event, { blocked: 'honeypot' });
+      return json({ ok: true });
+    }
+
+    const { fullName, email, phone, country, experience, languages, specialties, message, heardFrom, referredByAmbassadorCode } = body;
     if (!fullName || !email || !phone || !country) {
       return json({ error: 'Missing required fields' }, 400);
     }
 
+    // Field length limits
+    const trimmed = {
+      fullName: String(fullName).trim().slice(0, FIELD_LIMITS.fullName),
+      email: String(email).trim().toLowerCase().slice(0, FIELD_LIMITS.email),
+      phone: String(phone).trim().slice(0, FIELD_LIMITS.phone),
+      country: String(country).trim().slice(0, FIELD_LIMITS.country),
+      languages: String(languages || '').trim().slice(0, FIELD_LIMITS.languages),
+      specialties: String(specialties || '').trim().slice(0, FIELD_LIMITS.specialties),
+      message: String(message || '').trim().slice(0, FIELD_LIMITS.message),
+      heardFrom: String(heardFrom || '').trim().slice(0, FIELD_LIMITS.heardFrom),
+    };
+
+    // Basic email format check
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed.email)) {
+      return json({ error: 'Invalid email address' }, 400);
+    }
+
     const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+
+    // Duplicate detection: block same email within 24 hours
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: existing } = await supabase
+      .from('guide_applications')
+      .select('id')
+      .eq('email', trimmed.email)
+      .gte('created_at', oneDayAgo)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      safeLog('apply-guide', event, { blocked: 'duplicate', email_domain: trimmed.email.split('@')[1] });
+      // Return success to avoid leaking whether email exists
+      return json({ ok: true });
+    }
+
     const { error: dbError } = await supabase.from('guide_applications').insert({
-      full_name: fullName, email, phone, country,
-      experience: parseInt(experience) || 0, languages, specialties,
-      message, heard_from: heardFrom, status: 'pending',
+      full_name: trimmed.fullName, email: trimmed.email, phone: trimmed.phone,
+      country: trimmed.country, experience: parseInt(experience) || 0,
+      languages: trimmed.languages, specialties: trimmed.specialties,
+      message: trimmed.message, heard_from: trimmed.heardFrom, status: 'pending',
       referred_by_ambassador_code: referredByAmbassadorCode || null,
     });
     if (dbError) throw dbError;
 
+    safeLog('apply-guide', event, { created: true, email_domain: trimmed.email.split('@')[1] });
+
     if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
       const html = `<h2>New Guide Application</h2><table style="border-collapse:collapse;width:100%">${
-        [['Name', fullName], ['Email', email], ['Phone', phone], ['Country', country],
-         ['Experience', experience + ' years'], ['Languages', languages],
-         ['Specialties', specialties], ['Heard From', heardFrom],
-         ['Message', message]].map(([k, v]) =>
+        [['Name', trimmed.fullName], ['Email', trimmed.email], ['Phone', trimmed.phone], ['Country', trimmed.country],
+         ['Experience', experience + ' years'], ['Languages', trimmed.languages],
+         ['Specialties', trimmed.specialties], ['Heard From', trimmed.heardFrom],
+         ['Message', trimmed.message]].map(([k, v]) =>
           `<tr style="border:1px solid #ddd"><td style="padding:8px;font-weight:700">${k}</td><td style="padding:8px">${v || '—'}</td></tr>`
         ).join('')}</table><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
 
@@ -525,7 +618,7 @@ async function handleApplyGuide(event) {
         body: JSON.stringify({
           from: 'BucketListSpots <notifications@bucketlistspots.com>',
           to: process.env.NOTIFICATION_EMAIL,
-          subject: `New Guide Application: ${fullName} from ${country}`,
+          subject: `New Guide Application: ${trimmed.fullName} from ${trimmed.country}`,
           html,
         }),
       });
@@ -533,7 +626,7 @@ async function handleApplyGuide(event) {
 
     return json({ ok: true });
   } catch (err) {
-    console.error('apply-guide error:', err);
+    safeLog('apply-guide', event, { error: err.message });
     return json({ error: err.message }, 500);
   }
 }
@@ -541,25 +634,75 @@ async function handleApplyGuide(event) {
 // ─── Ambassador Application ───────────────────────────────────────────
 async function handleApplyAmbassador(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
+
+  const ip = event.headers?.['x-forwarded-for'] || event.headers?.['client-ip'] || 'anon';
+  if (rateLimit(`aa:${ip}`, 5, 15 * 60000)) {
+    safeLog('apply-ambassador', event, { blocked: 'rate_limit' });
+    return json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   try {
-    const { fullName, email, phone, country, platform, handle, followers, niche, whyYou, heardFrom } = reqBody(event);
+    const body = reqBody(event);
+
+    // Honeypot
+    if (body.faxNumber) {
+      safeLog('apply-ambassador', event, { blocked: 'honeypot' });
+      return json({ ok: true });
+    }
+
+    const { fullName, email, phone, country, platform, handle, followers, niche, whyYou, heardFrom } = body;
     if (!fullName || !email || !platform || !handle) {
       return json({ error: 'Missing required fields' }, 400);
     }
 
+    // Field length limits
+    const t = {
+      fullName: String(fullName).trim().slice(0, 200),
+      email: String(email).trim().toLowerCase().slice(0, 254),
+      phone: String(phone || '').trim().slice(0, 30),
+      country: String(country || '').trim().slice(0, 100),
+      platform: String(platform).trim().slice(0, 50),
+      handle: String(handle).trim().slice(0, 100),
+      niche: String(niche || '').trim().slice(0, 200),
+      whyYou: String(whyYou || '').trim().slice(0, 2000),
+      heardFrom: String(heardFrom || '').trim().slice(0, 200),
+    };
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t.email)) {
+      return json({ error: 'Invalid email address' }, 400);
+    }
+
     const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+
+    // Duplicate detection
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: existing } = await supabase
+      .from('ambassador_applications')
+      .select('id')
+      .eq('email', t.email)
+      .gte('created_at', oneDayAgo)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      safeLog('apply-ambassador', event, { blocked: 'duplicate' });
+      return json({ ok: true });
+    }
+
     const { error: dbError } = await supabase.from('ambassador_applications').insert({
-      full_name: fullName, email, phone, country, platform, handle,
-      followers: parseInt(followers) || 0, niche, why_you: whyYou,
-      heard_from: heardFrom, status: 'pending',
+      full_name: t.fullName, email: t.email, phone: t.phone, country: t.country,
+      platform: t.platform, handle: t.handle,
+      followers: parseInt(followers) || 0, niche: t.niche, why_you: t.whyYou,
+      heard_from: t.heardFrom, status: 'pending',
     });
     if (dbError) throw dbError;
 
+    safeLog('apply-ambassador', event, { created: true });
+
     if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
       const html = `<h2>New Ambassador Application</h2><table style="border-collapse:collapse;width:100%">${
-        [['Name', fullName], ['Email', email], ['Phone', phone], ['Country', country],
-         ['Platform', platform], ['Handle', handle], ['Followers', followers],
-         ['Niche', niche], ['Why', whyYou], ['Heard From', heardFrom]].map(([k, v]) =>
+        [['Name', t.fullName], ['Email', t.email], ['Phone', t.phone], ['Country', t.country],
+         ['Platform', t.platform], ['Handle', t.handle], ['Followers', followers],
+         ['Niche', t.niche], ['Why', t.whyYou], ['Heard From', t.heardFrom]].map(([k, v]) =>
           `<tr style="border:1px solid #ddd"><td style="padding:8px;font-weight:700">${k}</td><td style="padding:8px">${v || '—'}</td></tr>`
         ).join('')}</table><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
 
@@ -569,7 +712,7 @@ async function handleApplyAmbassador(event) {
         body: JSON.stringify({
           from: 'BucketListSpots <notifications@bucketlistspots.com>',
           to: process.env.NOTIFICATION_EMAIL,
-          subject: `New Ambassador: ${fullName} (${platform}, ${followers} followers)`,
+          subject: `New Ambassador: ${t.fullName} (${t.platform}, ${followers} followers)`,
           html,
         }),
       });
@@ -577,7 +720,7 @@ async function handleApplyAmbassador(event) {
 
     return json({ ok: true });
   } catch (err) {
-    console.error('apply-ambassador error:', err);
+    safeLog('apply-ambassador', event, { error: err.message });
     return json({ error: err.message }, 500);
   }
 }
@@ -1279,16 +1422,33 @@ async function handleAdminPlatformConfig(event) {
 // POST /api/pricing-preview — display-only calculator, no auth required
 async function handlePricingPreview(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
+
+  // Rate limit: 30 requests per minute per IP
+  const ip = event.headers?.['x-forwarded-for'] || event.headers?.['client-ip'] || 'anon';
+  if (rateLimit(`pp:${ip}`, 30, 60000)) {
+    safeLog('pricing-preview', event, { blocked: 'rate_limit' });
+    return json({ error: 'Too many requests. Please wait a moment.' }, 429);
+  }
+
   try {
     const { tripPrice, currency, travelers, referralCode, porterTraining } = reqBody(event);
-    const parsedPrice = parseFloat(tripPrice);
-    if (!tripPrice || isNaN(parsedPrice) || parsedPrice <= 0) return json({ error: 'tripPrice must be a positive number' }, 400);
+
+    // Strict price validation: finite, positive, ≤ MAX, max 2 decimal places
+    const price = Number(tripPrice);
+    if (!Number.isFinite(price) || price <= 0 || price > MAX_LISTED_TRIP_PRICE) {
+      return json({ error: `tripPrice must be a positive number up to ${MAX_LISTED_TRIP_PRICE}` }, 400);
+    }
+    // Max 2 decimal places: price * 100 must be an integer
+    if (!Number.isInteger(Math.round(price * 100))) {
+      return json({ error: 'tripPrice must have at most 2 decimal places' }, 400);
+    }
+
     const allowedCurrencies = ['gbp', 'eur', 'usd'];
     const cur = (currency || 'usd').toLowerCase();
     if (!allowedCurrencies.includes(cur)) return json({ error: `Unsupported currency. Allowed: ${allowedCurrencies.join(', ')}` }, 400);
 
     const pricing = await calculateBookingPrice({
-      tripPrice, currency: cur, travelers, referralCode: referralCode || null, porterTraining: porterTraining || false,
+      tripPrice: price, currency: cur, travelers, referralCode: referralCode || null, porterTraining: porterTraining || false,
     });
 
     return json({
@@ -1325,6 +1485,8 @@ async function handlePricingPreview(event) {
 // GET /api/public-platform-settings — safe subset for marketing pages
 async function handlePublicPlatformSettings(event) {
   if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const ip = event.headers?.['x-forwarded-for'] || event.headers?.['client-ip'] || 'anon';
+  if (rateLimit(`ps:${ip}`, 60, 60000)) return json({ error: 'Too many requests' }, 429);
   try {
     const config = await getPlatformConfig();
     const now = new Date();
@@ -1365,6 +1527,8 @@ async function handlePublicPlatformSettings(event) {
 // GET /api/public-testimonials?page=/for-guides — approved, published, consented
 async function handlePublicTestimonials(event) {
   if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const ip = event.headers?.['x-forwarded-for'] || event.headers?.['client-ip'] || 'anon';
+  if (rateLimit(`pt:${ip}`, 30, 60000)) return json({ error: 'Too many requests' }, 429);
   try {
     const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
     const page = event.queryStringParameters?.page || null;
