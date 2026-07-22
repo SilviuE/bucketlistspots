@@ -42,7 +42,24 @@ async function authUser(event) {
   return { user, error: null, supabase };
 }
 
-const DISCOUNT_AMOUNT = 50; // £50 / $50 / €50 off the deposit
+// ─── Pricing Engine (Spec v1.4) ───────────────────────────────────────
+// Configurable flat referral discounts per currency
+const REFERRAL_FLAT_DISCOUNT = { gbp: 50, eur: 50, usd: 50 };
+const REFERRAL_DISCOUNT_CAP_PCT = 0.15; // 15% of gross BLS Platform Fee
+const PLATFORM_FEE_PCT = 0.20;          // BLS Platform Fee = 20% of listed trip price
+
+function roundCurrency(amount, currency) {
+  // Round to 2 decimal places (minor units handled at Stripe level)
+  return Math.round(amount * 100) / 100;
+}
+
+function calculateReferralDiscount({ currency, grossPlatformFee, eligiblePlatformFeeRemaining }) {
+  const cur = (currency || 'usd').toLowerCase();
+  const flatDiscount = REFERRAL_FLAT_DISCOUNT[cur] || REFERRAL_FLAT_DISCOUNT.usd;
+  const percentageCap = roundCurrency(grossPlatformFee * REFERRAL_DISCOUNT_CAP_PCT, cur);
+  const cap = eligiblePlatformFeeRemaining !== undefined ? eligiblePlatformFeeRemaining : grossPlatformFee;
+  return Math.max(0, Math.min(flatDiscount, percentageCap, cap));
+}
 
 // ─── Stripe Checkout ──────────────────────────────────────────────────
 async function handleStripe(event) {
@@ -62,10 +79,18 @@ async function handleStripe(event) {
         // Prevent self-referral (guides cannot use their own code)
         const referrerGuideId = referrer.role === 'guide' ? referrer.id : null;
         if (referrerGuideId !== guideId) {
-          const discountCents = DISCOUNT_AMOUNT * 100;
+          // Calculate effective discount using pricing engine
+          const grossPlatformFee = price * PLATFORM_FEE_PCT;
+          const eligibleRemaining = grossPlatformFee; // Full fee eligible at checkout
+          const effectiveDiscount = calculateReferralDiscount({
+            currency: currency || 'usd',
+            grossPlatformFee,
+            eligiblePlatformFeeRemaining: eligibleRemaining,
+          });
+          const discountCents = Math.round(effectiveDiscount * 100);
           const depositCents = depositAmount * 100;
           finalDeposit = Math.max(0, (depositCents - discountCents)) / 100;
-          appliedReferral = { code: referralCode, referrerUserId: referrer.user_id || referrer.id, discountAmount: DISCOUNT_AMOUNT };
+          appliedReferral = { code: referralCode, referrerUserId: referrer.user_id || referrer.id, discountAmount: effectiveDiscount };
         }
       }
     }
@@ -90,6 +115,10 @@ async function handleStripe(event) {
         referralCode: appliedReferral?.code || '',
         referrerUserId: appliedReferral?.referrerUserId || '',
         discountAmount: String(appliedReferral?.discountAmount || 0),
+        presentmentCurrency: (currency || 'usd').toLowerCase(),
+        presentmentAmount: String(finalDeposit),
+        grossPlatformFee: String(price * PLATFORM_FEE_PCT),
+        platformFeePct: String(PLATFORM_FEE_PCT),
       },
       success_url: `${origin}/checkout/${guideId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout/${guideId}?payment=cancel`,
@@ -117,7 +146,7 @@ async function findReferralByCode(code) {
 async function handleValidateReferral(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
-    const { code, currentGuideId } = reqBody(event);
+    const { code, currentGuideId, price, currency } = reqBody(event);
     if (!code) return json({ valid: false, error: 'No code provided' });
 
     const referrer = await findReferralByCode(code.toUpperCase());
@@ -128,18 +157,40 @@ async function handleValidateReferral(event) {
       return json({ valid: false, error: 'Cannot use your own referral code' });
     }
 
+    const cur = (currency || 'usd').toLowerCase();
+    const advertisedMax = REFERRAL_FLAT_DISCOUNT[cur] || REFERRAL_FLAT_DISCOUNT.usd;
+    const grossPlatformFee = (price || 0) * PLATFORM_FEE_PCT;
+    const percentageCap = roundCurrency(grossPlatformFee * REFERRAL_DISCOUNT_CAP_PCT, cur);
+    const effectiveDiscount = calculateReferralDiscount({
+      currency: cur,
+      grossPlatformFee,
+      eligiblePlatformFeeRemaining: grossPlatformFee,
+    });
+
     return json({
       valid: true,
-      discountAmount: DISCOUNT_AMOUNT,
+      code: code.toUpperCase(),
+      currency: cur,
+      advertisedMaximumDiscount: advertisedMax,
+      percentageCap: REFERRAL_DISCOUNT_CAP_PCT,
+      percentageCapAmount: percentageCap,
+      effectiveDiscount,
+      appliesTo: 'platform_fee_balance',
+      localPartnerBalanceAffected: false,
       referrerName: referrer.trading_name || referrer.name || 'Referrer',
       referrerRole: referrer.role,
+      // Legacy field for backwards compat
+      discountAmount: effectiveDiscount,
+      message: effectiveDiscount < advertisedMax
+        ? `Your code gives you ${cur === 'gbp' ? '£' : cur === 'eur' ? '€' : '$'}${effectiveDiscount} off this booking.`
+        : `Your code gives you up to ${cur === 'gbp' ? '£' : cur === 'eur' ? '€' : '$'}${advertisedMax} off this booking.`,
     });
   } catch (err) {
     return json({ error: err.message }, 500);
   }
 }
 
-// POST /api/confirm-payment — credit BLS Points after successful payment + ambassador commission
+// POST /api/confirm-payment — credit BLS Points after successful payment + ambassador commission + persist financial data
 const AMBASSADOR_COMMISSION_RATE = 0.05; // 5% lifetime commission
 
 async function handleConfirmPayment(event) {
@@ -153,13 +204,70 @@ async function handleConfirmPayment(event) {
     const meta = session.metadata || {};
     const referralCode = meta.referralCode;
     const referrerUserId = meta.referrerUserId;
-    const discountAmount = parseInt(meta.discountAmount || '0');
+    const discountAmount = parseFloat(meta.discountAmount || '0');
+    const presentmentCurrency = (meta.presentmentCurrency || 'usd').toLowerCase();
 
     const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
       db: { schema: 'public' },
     });
 
     const results = {};
+
+    // ─── Stripe Financial Data ──────────────────────────────────────
+    // Retrieve balance transaction for accurate fee data
+    let stripeFinancialData = null;
+    try {
+      if (session.payment_intent) {
+        const pi = await stripe.paymentIntents.retrieve(session.payment_intent);
+        if (pi.latest_charge) {
+          const charge = await stripe.charges.retrieve(pi.latest_charge);
+          if (charge.balance_transaction) {
+            const bt = await stripe.balanceTransactions.retrieve(charge.balance_transaction);
+            const processingFee = bt.fee_details ? bt.fee_details.filter(f => f.type === 'charge').reduce((s, f) => s + f.amount, 0) / 100 : null;
+            const conversionFee = bt.fee_details ? bt.fee_details.filter(f => f.type === 'currency_conversion').reduce((s, f) => s + f.amount, 0) / 100 : null;
+            const totalFee = bt.fee / 100;
+            // Settlement fee = total fee - processing fee - conversion fee
+            const settlementFee = (processingFee !== null && conversionFee !== null) ? Math.round((totalFee - processingFee - conversionFee) * 100) / 100 : null;
+
+            stripeFinancialData = {
+              session_id: sessionId,
+              guide_id: meta.guideId || null,
+              guest_name: meta.guestName || null,
+              guest_email: meta.guestEmail || null,
+              route_name: meta.routeName || null,
+              booking_date: meta.date || null,
+              presentment_currency: presentmentCurrency,
+              presentment_amount: parseFloat(meta.presentmentAmount || '0') || (session.amount_total || 0) / 100,
+              settlement_currency: bt.currency,
+              settlement_amount: bt.net / 100,
+              total_stripe_fee: totalFee,
+              net_settlement_amount: bt.net / 100,
+              stripe_balance_transaction_id: bt.id,
+              stripe_processing_fee: processingFee,
+              stripe_conversion_fee: conversionFee,
+              stripe_settlement_fee: settlementFee,
+              referral_code: referralCode || null,
+              referral_discount_amount: discountAmount || 0,
+              gross_platform_fee: parseFloat(meta.grossPlatformFee || '0'),
+              platform_fee_pct: parseFloat(meta.platformFeePct || '0.2'),
+            };
+          }
+        }
+      }
+    } catch (stripeErr) {
+      console.error('Could not retrieve Stripe balance transaction:', stripeErr.message);
+    }
+
+    // ─── Persist financial data to payment_reports table ─────────────
+    if (stripeFinancialData) {
+      try {
+        const { error: insertErr } = await sr.from('payment_reports').insert(stripeFinancialData);
+        if (insertErr) console.error('Failed to persist payment report:', insertErr.message);
+        results.stripeFinancials = stripeFinancialData;
+      } catch (insertEx) {
+        console.error('payment_reports insert error:', insertEx.message);
+      }
+    }
 
     // ─── Traveller Referral Points ───────────────────────────────────
     if (referralCode && referrerUserId && discountAmount > 0) {
@@ -194,14 +302,11 @@ async function handleConfirmPayment(event) {
         .maybeSingle();
 
       if (guideRecord?.referred_by_ambassador_id) {
-        // Use the actual amount charged to Stripe as the basis
         const amountCharged = (session.amount_total || 0) / 100;
         const commissionAmount = Math.round(amountCharged * AMBASSADOR_COMMISSION_RATE * 100) / 100;
 
         if (commissionAmount > 0) {
           const ambassadorId = guideRecord.referred_by_ambassador_id;
-
-          // Credit ambassador via transactions table
           await sr.from('transactions').insert({
             user_id: ambassadorId,
             amount: commissionAmount,
@@ -209,14 +314,9 @@ async function handleConfirmPayment(event) {
             reason: `Ambassador commission (5%): ${meta.guestName || 'a traveller'} booked ${meta.routeName || 'a trip'} with guide ${guideRecord.name || guideId}`,
             linked_booking_id: sessionId,
           });
-
           results.ambassadorCommission = { credited: true, amount: commissionAmount, ambassadorId };
         }
       }
-    }
-
-    if (!results.referral && !results.ambassadorCommission) {
-      return json({ credited: false, reason: 'No referral or ambassador commission to process' });
     }
 
     return json(results);
@@ -904,6 +1004,89 @@ async function handlePosts(event) {
   return json({ error: 'Method not allowed' }, 405);
 }
 
+// GET /api/admin/payment-reports — multi-currency payment report (admin-only)
+// ?format=csv returns CSV download; default returns JSON
+// ?currency=usd filters by presentment currency
+// ?from=2026-01-01&to=2026-12-31 filters by date range
+async function handleAdminPaymentReports(event) {
+  if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  try {
+    const token = (event.headers.authorization || '').replace('Bearer ', '');
+    if (!token) return json({ error: 'Unauthorized' }, 401);
+    let user;
+    try { user = jwtDecode(token); } catch { return json({ error: 'Invalid token' }, 401); }
+    if (user.role !== 'admin') return json({ error: 'Admin access required' }, 403);
+
+    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const url = new URL(event.url, 'http://localhost');
+    const format = url.searchParams.get('format') || 'json';
+    const currency = url.searchParams.get('currency');
+    const from = url.searchParams.get('from');
+    const to = url.searchParams.get('to');
+
+    let query = sr.from('payment_reports').select('*').order('created_at', { ascending: false });
+    if (currency) query = query.eq('presentment_currency', currency.toLowerCase());
+    if (from) query = query.gte('created_at', from);
+    if (to) query = query.lte('created_at', to + 'T23:59:59Z');
+
+    const { data, error } = await query;
+    if (error) return json({ error: error.message }, 500);
+
+    if (format === 'csv') {
+      const headers = [
+        'session_id', 'guide_id', 'guest_name', 'guest_email', 'route_name', 'booking_date',
+        'presentment_currency', 'presentment_amount', 'settlement_currency', 'settlement_amount',
+        'total_stripe_fee', 'net_settlement_amount', 'stripe_balance_transaction_id',
+        'stripe_processing_fee', 'stripe_conversion_fee', 'stripe_settlement_fee',
+        'referral_code', 'referral_discount_amount', 'gross_platform_fee', 'platform_fee_pct', 'created_at',
+      ];
+      const csvRows = [headers.join(',')];
+      for (const row of (data || [])) {
+        csvRows.push(headers.map(h => {
+          const val = row[h];
+          if (val === null || val === undefined) return '';
+          const str = String(val);
+          return str.includes(',') || str.includes('"') || str.includes('\n') ? `"${str.replace(/"/g, '""')}"` : str;
+        }).join(','));
+      }
+      return {
+        statusCode: 200,
+        headers: {
+          'Content-Type': 'text/csv',
+          'Content-Disposition': 'attachment; filename="payment-reports.csv"',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: csvRows.join('\n'),
+      };
+    }
+
+    // Summary stats for JSON response
+    const summary = {
+      totalTransactions: (data || []).length,
+      byCurrency: {},
+      totalStripeFees: 0,
+      totalReferralDiscounts: 0,
+    };
+    for (const row of (data || [])) {
+      const cur = row.presentment_currency || 'usd';
+      if (!summary.byCurrency[cur]) {
+        summary.byCurrency[cur] = { count: 0, grossAmount: 0, stripeFees: 0, netSettlement: 0, referralDiscounts: 0 };
+      }
+      summary.byCurrency[cur].count += 1;
+      summary.byCurrency[cur].grossAmount += Number(row.presentment_amount) || 0;
+      summary.byCurrency[cur].stripeFees += Number(row.total_stripe_fee) || 0;
+      summary.byCurrency[cur].netSettlement += Number(row.net_settlement_amount) || 0;
+      summary.byCurrency[cur].referralDiscounts += Number(row.referral_discount_amount) || 0;
+      summary.totalStripeFees += Number(row.total_stripe_fee) || 0;
+      summary.totalReferralDiscounts += Number(row.referral_discount_amount) || 0;
+    }
+
+    return json({ reports: data || [], summary });
+  } catch (err) {
+    return json({ error: err.message }, 500);
+  }
+}
+
 // ─── Main Router ──────────────────────────────────────────────────────
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return json({ ok: true });
@@ -947,6 +1130,10 @@ exports.handler = async (event) => {
     case 'webhooks':
       const webhookPath = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);
       if (webhookPath[1] === 'charity') return handleCharityWebhook(event);
+      return json({ error: 'Not found' }, 404);
+    case 'admin':
+      const adminPath = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);
+      if (adminPath[1] === 'payment-reports') return handleAdminPaymentReports(event);
       return json({ error: 'Not found' }, 404);
     default:
       return json({ error: 'Not found' }, 404);

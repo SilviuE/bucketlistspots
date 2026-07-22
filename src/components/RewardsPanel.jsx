@@ -48,7 +48,7 @@ export default function RewardsPanel() {
             {copied ? 'Copied!' : 'Copy'}
           </Button>
         </Box>
-        <Typography variant="caption" color="text.secondary">Share this code with travellers to earn BLS Points</Typography>
+        <Typography variant="caption" color="text.secondary">Share this code with travellers — they save up to £50/€50/$50 off their booking</Typography>
       </Paper>
 
       <Paper elevation={0} sx={{ p: 2, mb: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 2, textAlign: 'center', bgcolor: '#f0faf8' }}>

@@ -88,6 +88,7 @@ const [referralStatus, setReferralStatus] = useState(null); // null | 'loading' 
 const [referralDiscount, setReferralDiscount] = useState(0);
 const [referralName, setReferralName] = useState('');
 const [referralError, setReferralError] = useState('');
+const [referralAdvertisedMax, setReferralAdvertisedMax] = useState(0);
 
 const validateReferral = async (code) => {
   if (!code.trim()) { setReferralStatus(null); setReferralDiscount(0); setReferralError(''); return; }
@@ -97,13 +98,14 @@ const validateReferral = async (code) => {
     const res = await fetch(`${apiBase}/api/validate-referral`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code.toUpperCase(), currentGuideId: guideId }),
+      body: JSON.stringify({ code: code.toUpperCase(), currentGuideId: guideId, price: routePrice, currency }),
     });
     const data = await res.json();
     if (data.valid) {
       setReferralStatus('valid');
-      setReferralDiscount(data.discountAmount);
+      setReferralDiscount(data.effectiveDiscount || data.discountAmount || 0);
       setReferralName(data.referrerName);
+      setReferralAdvertisedMax(data.advertisedMaximumDiscount || 50);
     } else {
       setReferralStatus('invalid');
       setReferralDiscount(0);
@@ -361,9 +363,14 @@ const validateReferral = async (code) => {
             {referralStatus === 'valid' && (
               <>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                  <Typography variant="caption" sx={{ color: '#2A9D8F' }}>Referral Discount ({referralName})</Typography>
+                  <Typography variant="caption" sx={{ color: '#2A9D8F' }}>Scout Discount ({referralName})</Typography>
                   <Typography variant="caption" fontWeight={700} sx={{ color: '#2A9D8F' }}>-{formatPrice(referralDiscount, currency)}</Typography>
                 </Box>
+                {referralDiscount < referralAdvertisedMax && (
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: 10, mb: 0.5, display: 'block' }}>
+                    (Max code value {formatPrice(referralAdvertisedMax, currency)}, capped at 15% of Platform Fee)
+                  </Typography>
+                )}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                   <Typography variant="caption" fontWeight={700}>New Deposit Due Today</Typography>
                   <Typography variant="caption" fontWeight={700} sx={{ color: '#E05D3A' }}>{formatPrice(discountedDeposit, currency)}</Typography>
@@ -388,7 +395,7 @@ const validateReferral = async (code) => {
               onClick={() => setShowReferral(!showReferral)}>
               <DiscountIcon sx={{ fontSize: 16, color: '#2A9D8F' }} />
               <Typography variant="caption" fontWeight={600} sx={{ color: '#2A9D8F' }}>
-                {showReferral ? 'Hide' : 'Have a Guide Referral Code?'}
+                {showReferral ? 'Hide' : 'Have a Scout Code? Save up to ' + formatPrice(50, currency)}
               </Typography>
             </Box>
             <Collapse in={showReferral}>
@@ -406,9 +413,17 @@ const validateReferral = async (code) => {
                 </Button>
               </Box>
               {referralStatus === 'valid' && (
-                <Typography variant="caption" sx={{ color: '#2A9D8F', mt: 0.5, display: 'block' }}>
-                  {formatPrice(referralDiscount, currency)} discount applied! Referred by {referralName}.
-                </Typography>
+                <Box sx={{ mt: 0.5 }}>
+                  <Typography variant="caption" sx={{ color: '#2A9D8F', display: 'block' }}>
+                    Scout Code <strong>{referralCode.toUpperCase()}</strong> applied! Referred by {referralName}.
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#2A9D8F', display: 'block', fontSize: 11 }}>
+                    Maximum code value {formatPrice(referralAdvertisedMax, currency)} · Discount for this booking {formatPrice(referralDiscount, currency)}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: 10 }}>
+                    Applied to Platform Fee Balance. Local Partner Balance unchanged.
+                  </Typography>
+                </Box>
               )}
               {referralError && (
                 <Typography variant="caption" sx={{ color: '#E05D3A', mt: 0.5, display: 'block' }}>

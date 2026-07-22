@@ -15,6 +15,7 @@ import BecomeGuide from './pages/BecomeGuide';
 import BecomeAmbassador from './pages/BecomeAmbassador';
 import NewsFeed from './pages/NewsFeed';
 import AdminApplications from './pages/AdminApplications';
+import AdminPaymentReports from './pages/AdminPaymentReports';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import DestinationPage from './pages/DestinationPage';
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/become-a-guide" element={<BecomeGuide />} />
         <Route path="/ambassador" element={<BecomeAmbassador />} />
         <Route path="/admin/applications" element={<AdminApplications />} />
+        <Route path="/admin/payment-reports" element={<AdminPaymentReports />} />
         <Route path="/guide/:id" element={<GuideProfile />} />
         <Route path="/checkout/:guideId" element={<Checkout />} />
         <Route path="/auth" element={<AuthPage />} />
