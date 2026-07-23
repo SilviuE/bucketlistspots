@@ -14,17 +14,36 @@ CREATE TABLE IF NOT EXISTS webhook_event_inbox (
   event_type TEXT NOT NULL,
   stripe_session_id TEXT,
   payload JSONB NOT NULL DEFAULT '{}',
-  status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'processing', 'completed', 'failed')),
+  status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'processing', 'completed', 'failed', 'ignored')),
   error_message TEXT,
   retryable BOOLEAN NOT NULL DEFAULT false,
   received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   processed_at TIMESTAMPTZ,
+  skip_reason TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_webhook_inbox_session ON webhook_event_inbox(stripe_session_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_inbox_status ON webhook_event_inbox(status);
 CREATE INDEX IF NOT EXISTS idx_webhook_inbox_retryable ON webhook_event_inbox(retryable) WHERE retryable = true;
+
+-- 1b. Update CHECK constraint to include 'ignored' for existing tables
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'webhook_event_inbox'::regclass
+    AND pg_get_constraintdef(oid) LIKE 'CHECK%'
+    AND pg_get_constraintdef(oid) NOT LIKE '%ignored%'
+  ) THEN
+    ALTER TABLE webhook_event_inbox DROP CONSTRAINT IF EXISTS webhook_event_inbox_status_check;
+    ALTER TABLE webhook_event_inbox ADD CONSTRAINT webhook_event_inbox_status_check
+      CHECK (status IN ('received', 'processing', 'completed', 'failed', 'ignored'));
+  END IF;
+END $$;
+
+-- 1c. Add skip_reason column for existing tables
+ALTER TABLE webhook_event_inbox ADD COLUMN IF NOT EXISTS skip_reason TEXT;
 
 -- 2. Booking Confirmations
 CREATE TABLE IF NOT EXISTS booking_confirmations (
@@ -204,6 +223,88 @@ REVOKE EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMER
 REVOKE EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERIC, TEXT, TEXT) FROM anon;
 REVOKE EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERIC, TEXT, TEXT) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERIC, TEXT, TEXT) TO service_role;
+
+-- 7b. RPC: Atomic webhook event claim (additive, safe for existing DBs)
+CREATE OR REPLACE FUNCTION public.claim_webhook_event(
+  p_event_id TEXT,
+  p_stale_cutoff TIMESTAMPTZ
+)
+RETURNS TABLE (
+  claimed BOOLEAN,
+  action TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_updated INT;
+BEGIN
+  -- 1. Claim new event (status = 'received')
+  UPDATE public.webhook_event_inbox
+  SET status = 'processing', processed_at = NOW()
+  WHERE event_id = p_event_id AND status = 'received';
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  IF v_updated > 0 THEN
+    claimed := true;
+    action := 'claimed_new';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  -- 2. Claim retry (status = 'failed')
+  UPDATE public.webhook_event_inbox
+  SET status = 'processing', processed_at = NOW(), error_message = NULL
+  WHERE event_id = p_event_id AND status = 'failed';
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  IF v_updated > 0 THEN
+    claimed := true;
+    action := 'claimed_retry';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  -- 3. Recover stale processing (processed_at older than cutoff)
+  UPDATE public.webhook_event_inbox
+  SET status = 'processing', processed_at = NOW(), error_message = NULL
+  WHERE event_id = p_event_id
+    AND status = 'processing'
+    AND processed_at < p_stale_cutoff;
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  IF v_updated > 0 THEN
+    claimed := true;
+    action := 'claimed_stale';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  -- 4. Not claimable — determine reason
+  claimed := false;
+
+  IF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'completed') THEN
+    action := 'already_completed';
+  ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'ignored') THEN
+    action := 'already_ignored';
+  ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'processing') THEN
+    action := 'active_processing';
+  ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'received') THEN
+    action := 'recent_received';
+  ELSE
+    action := 'not_found';
+  END IF;
+
+  RETURN NEXT;
+END;
+$$;
+
+-- 7c. SECURITY: Revoke claim_webhook_event from non-service_role roles
+REVOKE EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) TO service_role;
 
 -- 8. RLS for new tables
 ALTER TABLE webhook_event_inbox ENABLE ROW LEVEL SECURITY;

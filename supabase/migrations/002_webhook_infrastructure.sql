@@ -10,11 +10,12 @@ CREATE TABLE IF NOT EXISTS webhook_event_inbox (
   event_type TEXT NOT NULL,
   stripe_session_id TEXT,
   payload JSONB NOT NULL DEFAULT '{}',
-  status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'processing', 'completed', 'failed')),
+  status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'processing', 'completed', 'failed', 'ignored')),
   error_message TEXT,
   retryable BOOLEAN NOT NULL DEFAULT false,
   received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   processed_at TIMESTAMPTZ,
+  skip_reason TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -213,6 +214,90 @@ REVOKE EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMER
 REVOKE EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERIC, TEXT, TEXT) FROM anon;
 REVOKE EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERIC, TEXT, TEXT) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERIC, TEXT, TEXT) TO service_role;
+
+-- 7b. RPC: Atomic webhook event claim — atomically transitions event to 'processing'
+-- Handles: received → processing, failed → processing, stale processing (>cutoff) → processing.
+-- SECURITY: REVOKE from PUBLIC/anon/authenticated; GRANT to service_role only.
+CREATE OR REPLACE FUNCTION public.claim_webhook_event(
+  p_event_id TEXT,
+  p_stale_cutoff TIMESTAMPTZ
+)
+RETURNS TABLE (
+  claimed BOOLEAN,
+  action TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_updated INT;
+BEGIN
+  -- 1. Claim new event (status = 'received')
+  UPDATE public.webhook_event_inbox
+  SET status = 'processing', processed_at = NOW()
+  WHERE event_id = p_event_id AND status = 'received';
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  IF v_updated > 0 THEN
+    claimed := true;
+    action := 'claimed_new';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  -- 2. Claim retry (status = 'failed')
+  UPDATE public.webhook_event_inbox
+  SET status = 'processing', processed_at = NOW(), error_message = NULL
+  WHERE event_id = p_event_id AND status = 'failed';
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  IF v_updated > 0 THEN
+    claimed := true;
+    action := 'claimed_retry';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  -- 3. Recover stale processing (processed_at older than cutoff)
+  UPDATE public.webhook_event_inbox
+  SET status = 'processing', processed_at = NOW(), error_message = NULL
+  WHERE event_id = p_event_id
+    AND status = 'processing'
+    AND processed_at < p_stale_cutoff;
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  IF v_updated > 0 THEN
+    claimed := true;
+    action := 'claimed_stale';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  -- 4. Not claimable — determine reason
+  claimed := false;
+
+  IF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'completed') THEN
+    action := 'already_completed';
+  ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'ignored') THEN
+    action := 'already_ignored';
+  ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'processing') THEN
+    action := 'active_processing';
+  ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'received') THEN
+    action := 'recent_received';
+  ELSE
+    action := 'not_found';
+  END IF;
+
+  RETURN NEXT;
+END;
+$$;
+
+-- 7c. SECURITY: Revoke claim_webhook_event from non-service_role roles
+REVOKE EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) TO service_role;
 
 -- 8. RLS for new tables
 ALTER TABLE webhook_event_inbox ENABLE ROW LEVEL SECURITY;

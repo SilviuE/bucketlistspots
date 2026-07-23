@@ -434,28 +434,139 @@ test('Webhook skips completed duplicates', () => {
 });
 
 test('Webhook reprocesses failed events (retryable)', () => {
-  assert.ok(webhook.includes("'failed'") && webhook.includes('Retrying'), 'Missing failed retry logic');
+  assert.ok(webhook.includes("'failed'"), 'Missing failed status in webhook');
+  assert.ok(freshInstall.includes('claimed_retry'), 'Missing claimed_retry in claim_webhook_event RPC');
 });
 
-test('Webhook recovers stale received events', () => {
+test('Webhook recovers stale received events via RPC', () => {
   assert.ok(webhook.includes('STALE_TIMEOUT_MS'), 'Missing stale timeout constant');
-  assert.ok(webhook.includes('stale received'), 'Missing stale received recovery');
+  assert.ok(freshInstall.includes('claimed_new'), 'Missing claimed_new in claim_webhook_event RPC');
+  assert.ok(freshInstall.includes("status = 'received'"), 'RPC does not claim received events');
 });
 
-test('Webhook recovers stale processing events', () => {
-  assert.ok(webhook.includes('stale processing'), 'Missing stale processing recovery');
+test('Webhook recovers stale processing events via RPC', () => {
+  assert.ok(freshInstall.includes('claimed_stale'), 'Missing claimed_stale in claim_webhook_event RPC');
+  assert.ok(freshInstall.includes('processed_at < p_stale_cutoff'), 'RPC does not recover stale processing');
 });
 
-test('Webhook uses atomic claim (UPDATE WHERE status)', () => {
-  assert.ok(webhook.includes('.in(\'status\', [\'received\', \'failed\'])'), 'Missing atomic claim with status filter');
+test('Webhook uses atomic RPC claim (claim_webhook_event)', () => {
+  assert.ok(webhook.includes('claim_webhook_event'), 'Webhook does not call claim_webhook_event RPC');
+  assert.ok(freshInstall.includes('claim_webhook_event'), 'Missing claim_webhook_event in fresh install migration');
+  assert.ok(webhookUpgrade.includes('claim_webhook_event'), 'Missing claim_webhook_event in upgrade migration');
 });
 
-test('Webhook prevents double-processing (claim check)', () => {
-  assert.ok(webhook.includes('could not be claimed'), 'Missing claim failure handling');
+test('Webhook prevents double-processing (not claimable check)', () => {
+  assert.ok(webhook.includes('not claimable'), 'Missing not claimable handling');
 });
 
 test('Webhook validates required metadata before fulfilment', () => {
   assert.ok(webhook.includes('Missing required metadata'), 'Missing metadata validation');
+});
+
+// ─── Webhook: Behavioral State Machine Tests ────────────────────────
+console.log('\n=== Webhook: Behavioral State Machine Tests ===\n');
+
+test('Stale received event is claimed and completed via RPC', () => {
+  assert.ok(freshInstall.includes('claimed_new'), 'Missing claimed_new in fresh install RPC');
+  assert.ok(freshInstall.includes("status = 'received'"), 'RPC does not claim received events');
+  assert.ok(webhook.includes('claim_webhook_event'), 'Webhook does not call claim_webhook_event RPC');
+  assert.ok(webhook.includes("status: 'completed'"), 'Webhook missing completed terminal state on success');
+});
+
+test('Stale processing event is recovered via RPC', () => {
+  assert.ok(freshInstall.includes('claimed_stale'), 'Missing claimed_stale in fresh install RPC');
+  assert.ok(freshInstall.includes('processed_at < p_stale_cutoff'), 'RPC does not recover stale processing');
+  assert.ok(webhookUpgrade.includes('claimed_stale'), 'Missing claimed_stale in upgrade RPC');
+});
+
+test('Recent processing event is not claimed by second worker', () => {
+  assert.ok(freshInstall.includes('active_processing'), 'Missing active_processing in fresh install RPC');
+  assert.ok(webhook.includes('not claimable'), 'Webhook does not handle non-claimable events');
+  assert.ok(webhook.includes("duplicate: true"), 'Webhook does not return duplicate:true for non-claimable');
+});
+
+test('Irrelevant Stripe event ends in terminal state (ignored)', () => {
+  assert.ok(webhook.includes("'ignored'"), 'Missing ignored terminal state in webhook');
+  assert.ok(webhook.includes('not_checkout_session'), 'Missing skip_reason for non-checkout events');
+  assert.ok(webhook.includes('retryable: false'), 'Missing retryable: false on ignored events');
+  assert.ok(webhook.includes('skip_reason'), 'Missing skip_reason field in webhook update');
+});
+
+test('Unpaid Checkout Session ends in terminal state without fulfilment', () => {
+  assert.ok(webhook.includes('payment_not_paid'), 'Missing skip_reason for unpaid sessions');
+  assert.ok(webhook.includes("'ignored'"), 'Unpaid session does not use ignored terminal state');
+  const unpaidSection = webhook.slice(webhook.indexOf('payment_status'), webhook.indexOf('Missing required metadata'));
+  assert.ok(!unpaidSection.includes('booking_confirmations') || unpaidSection.includes('ignored'), 'Unpaid session still attempts fulfilment');
+});
+
+test('Terminal non-retryable failure is not repeatedly processed', () => {
+  assert.ok(freshInstall.includes('already_completed'), 'Missing already_completed in RPC');
+  assert.ok(freshInstall.includes('already_ignored'), 'Missing already_ignored in RPC');
+  assert.ok(webhook.includes("retryable: false"), 'Missing retryable: false on terminal states');
+  assert.ok(webhook.includes("retryable: true"), 'Missing retryable: true on transient failures');
+});
+
+// ─── Migration: claim_webhook_event RPC ──────────────────────────────
+console.log('\n=== Migration: claim_webhook_event RPC ===\n');
+
+test('Fresh install: claim_webhook_event has SECURITY DEFINER', () => {
+  assert.ok(freshInstall.includes('claim_webhook_event') && freshInstall.includes('SECURITY DEFINER'), 'Missing SECURITY DEFINER for claim_webhook_event');
+});
+
+test('Fresh install: claim_webhook_event has SET search_path', () => {
+  const claimSection = freshInstall.slice(freshInstall.indexOf('claim_webhook_event'));
+  assert.ok(claimSection.includes('SET search_path'), 'Missing SET search_path for claim_webhook_event');
+});
+
+test('Fresh install: claim_webhook_event validates stale cutoff parameter', () => {
+  assert.ok(freshInstall.includes('p_stale_cutoff TIMESTAMPTZ'), 'Missing p_stale_cutoff parameter');
+  assert.ok(freshInstall.includes('processed_at < p_stale_cutoff'), 'Missing stale cutoff comparison');
+});
+
+test('Fresh install: claim_webhook_event returns claimed and action', () => {
+  assert.ok(freshInstall.includes('claimed BOOLEAN'), 'Missing claimed return column');
+  assert.ok(freshInstall.includes('action TEXT'), 'Missing action return column');
+});
+
+test('Fresh install: claim_webhook_event handles all four claim paths', () => {
+  assert.ok(freshInstall.includes('claimed_new'), 'Missing claimed_new path');
+  assert.ok(freshInstall.includes('claimed_retry'), 'Missing claimed_retry path');
+  assert.ok(freshInstall.includes('claimed_stale'), 'Missing claimed_stale path');
+  assert.ok(freshInstall.includes('active_processing'), 'Missing active_processing non-claimable path');
+});
+
+test('Fresh install: REVOKE claim_webhook_event from PUBLIC', () => {
+  assert.ok(freshInstall.includes('REVOKE EXECUTE') && freshInstall.includes('claim_webhook_event') && freshInstall.includes('FROM PUBLIC'), 'Missing REVOKE from PUBLIC for claim_webhook_event');
+});
+
+test('Fresh install: GRANT claim_webhook_event to service_role', () => {
+  assert.ok(freshInstall.includes('GRANT EXECUTE') && freshInstall.includes('claim_webhook_event') && freshInstall.includes('TO service_role'), 'Missing GRANT to service_role for claim_webhook_event');
+});
+
+test('Fresh install: webhook_event_inbox CHECK includes ignored', () => {
+  assert.ok(freshInstall.includes("'ignored'") && freshInstall.includes('CHECK'), 'CHECK constraint missing ignored status');
+});
+
+test('Fresh install: webhook_event_inbox has skip_reason column', () => {
+  assert.ok(freshInstall.includes('skip_reason TEXT'), 'Missing skip_reason column');
+});
+
+test('Upgrade migration: claim_webhook_event exists', () => {
+  assert.ok(webhookUpgrade.includes('claim_webhook_event'), 'Missing claim_webhook_event in upgrade migration');
+});
+
+test('Upgrade migration: CHECK constraint includes ignored for existing tables', () => {
+  assert.ok(webhookUpgrade.includes("'ignored'"), 'Missing ignored in upgrade CHECK constraint');
+  assert.ok(webhookUpgrade.includes('webhook_event_inbox_status_check'), 'Missing CHECK constraint update for existing tables');
+});
+
+test('Upgrade migration: skip_reason column added', () => {
+  assert.ok(webhookUpgrade.includes('skip_reason TEXT'), 'Missing skip_reason in upgrade migration');
+});
+
+test('Upgrade migration: REVOKE/GRANT for claim_webhook_event', () => {
+  assert.ok(webhookUpgrade.includes('REVOKE EXECUTE') && webhookUpgrade.includes('claim_webhook_event'), 'Missing REVOKE for claim_webhook_event in upgrade');
+  assert.ok(webhookUpgrade.includes('GRANT EXECUTE') && webhookUpgrade.includes('claim_webhook_event'), 'Missing GRANT for claim_webhook_event in upgrade');
 });
 
 // ─── RPC Security (Blocker 1) ──────────────────────────────────────

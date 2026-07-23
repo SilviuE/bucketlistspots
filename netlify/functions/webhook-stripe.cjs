@@ -13,10 +13,10 @@
 //   7. Return 200 promptly to Stripe (within timeout)
 //
 // State Machine:
-//   received → processing → completed
-//                      └→ failed → processing (retry via Stripe Dashboard)
-//   stale received (>5min) → failed (recoverable)
-//   stale processing (>5min) → failed (recoverable)
+//   received → processing → completed | failed | ignored
+//   failed → processing (retry via Stripe Dashboard)
+//   Terminal states: completed, ignored (non-retryable)
+//   Stale recovery: handled atomically by claim_webhook_event RPC
 //
 // Retry Policy:
 //   - Stripe retries failed webhooks with exponential backoff (up to 3 days)
@@ -72,7 +72,7 @@ exports.handler = async (event) => {
   const session = stripeEvent.data.object;
   const sessionId = session.id;
 
-  let isNewEvent = false;
+  // ─── STEP 2: Record event in inbox (ON CONFLICT = idempotency gate) ─
   try {
     const { error: inboxErr } = await sr.from('webhook_event_inbox').insert({
       event_id: eventId,
@@ -82,84 +82,53 @@ exports.handler = async (event) => {
       status: 'received',
     });
 
-    if (inboxErr) {
-      if (inboxErr.code === '23505') {
-        // Duplicate event — check if it's retryable (failed) or stale (received/processing)
-        const { data: existing } = await sr.from('webhook_event_inbox')
-          .select('status, processed_at')
-          .eq('event_id', eventId)
-          .maybeSingle();
-
-        if (!existing) {
-          console.log(`[Webhook] Duplicate event ${eventId}, no record found — skipping`);
-          return json({ ok: true, duplicate: true, eventId });
-        }
-
-        if (existing.status === 'completed') {
-          console.log(`[Webhook] Duplicate event ${eventId} already completed — skipping`);
-          return json({ ok: true, duplicate: true, status: 'completed', eventId });
-        }
-
-        if (existing.status === 'processing') {
-          const elapsed = Date.now() - new Date(existing.processed_at || existing.received_at || Date.now()).getTime();
-          if (elapsed < STALE_TIMEOUT_MS) {
-            console.log(`[Webhook] Event ${eventId} being processed by another worker — skipping`);
-            return json({ ok: true, duplicate: true, status: 'processing', eventId });
-          }
-          // Stale processing — fall through to reprocess
-          console.log(`[Webhook] Event ${eventId} stale processing (${Math.round(elapsed / 1000)}s) — reprocessing`);
-        }
-
-        if (existing.status === 'failed') {
-          console.log(`[Webhook] Retrying failed event ${eventId}`);
-        }
-
-        if (existing.status === 'received') {
-          const elapsed = Date.now() - new Date(existing.received_at || Date.now()).getTime();
-          if (elapsed < STALE_TIMEOUT_MS) {
-            console.log(`[Webhook] Event ${eventId} already received recently — skipping`);
-            return json({ ok: true, duplicate: true, status: 'received', eventId });
-          }
-          console.log(`[Webhook] Retrying stale received event ${eventId} (${Math.round(elapsed / 1000)}s)`);
-        }
-
-        // Retryable: failed, stale received, or stale processing — attempt claim
-        isNewEvent = true; // treat as "needs processing"
-      } else {
-        console.error('[Webhook] Inbox insert error:', inboxErr.message);
-        return json({ error: 'Failed to record event' }, 500);
-      }
-    } else {
-      isNewEvent = true;
+    if (inboxErr && inboxErr.code !== '23505') {
+      console.error('[Webhook] Inbox insert error:', inboxErr.message);
+      return json({ error: 'Failed to record event' }, 500);
     }
   } catch (inboxEx) {
     console.error('[Webhook] Inbox error:', inboxEx.message);
     return json({ error: 'Failed to record event' }, 500);
   }
 
-  if (!isNewEvent) {
-    return json({ ok: true, duplicate: true, eventId });
+  // ─── STEP 3: Atomic claim via RPC ────────────────────────────────
+  // claim_webhook_event handles: received → processing, failed → processing,
+  // and stale processing (>cutoff) → processing. Returns claimed: true/false.
+  const staleCutoff = new Date(Date.now() - STALE_TIMEOUT_MS).toISOString();
+  let claimResult;
+  try {
+    const { data, error: claimErr } = await sr.rpc('claim_webhook_event', {
+      p_event_id: eventId,
+      p_stale_cutoff: staleCutoff,
+    });
+
+    if (claimErr) {
+      console.error('[Webhook] Claim RPC error:', claimErr.message);
+      return json({ error: 'Failed to claim event' }, 500);
+    }
+
+    claimResult = data?.[0];
+  } catch (claimEx) {
+    console.error('[Webhook] Claim RPC exception:', claimEx.message);
+    return json({ error: 'Failed to claim event' }, 500);
   }
 
-  // ─── STEP 3: Atomic claim — set status='processing' ──────────────
-  // Only claim if status is 'received' or 'failed' (not 'completed' or 'processing')
-  const { data: claimed, error: claimErr } = await sr.from('webhook_event_inbox')
-    .update({ status: 'processing', processed_at: new Date().toISOString() })
-    .eq('event_id', eventId)
-    .in('status', ['received', 'failed'])
-    .select('event_id')
-    .maybeSingle();
-
-  if (claimErr || !claimed) {
-    // Another worker claimed it, or it was completed — skip
-    console.log(`[Webhook] Event ${eventId} could not be claimed (claimErr: ${claimErr?.message || 'already claimed/completed'})`);
-    return json({ ok: true, duplicate: true, eventId });
+  if (!claimResult || !claimResult.claimed) {
+    console.log(`[Webhook] Event ${eventId} not claimable (${claimResult?.action || 'unknown'})`);
+    return json({ ok: true, duplicate: true, action: claimResult?.action, eventId });
   }
+
+  console.log(`[Webhook] Event ${eventId} claimed (${claimResult.action})`);
 
   // ─── STEP 4: Process event type ─────────────────────────────────
   if (eventType !== 'checkout.session.completed') {
     await sr.from('webhook_event_inbox')
-      .update({ status: 'completed', processed_at: new Date().toISOString() })
+      .update({
+        status: 'ignored',
+        skip_reason: 'not_checkout_session',
+        retryable: false,
+        processed_at: new Date().toISOString(),
+      })
       .eq('event_id', eventId);
     return json({ ok: true, ignored: eventType, eventId });
   }
@@ -167,7 +136,12 @@ exports.handler = async (event) => {
   // Verify payment status
   if (session.payment_status !== 'paid') {
     await sr.from('webhook_event_inbox')
-      .update({ status: 'completed', processed_at: new Date().toISOString() })
+      .update({
+        status: 'ignored',
+        skip_reason: 'payment_not_paid',
+        retryable: false,
+        processed_at: new Date().toISOString(),
+      })
       .eq('event_id', eventId);
     console.log(`[Webhook] Session ${sessionId} payment_status=${session.payment_status}, no fulfilment needed`);
     return json({ ok: true, skipped: 'not_paid', payment_status: session.payment_status, eventId });
@@ -177,7 +151,12 @@ exports.handler = async (event) => {
   const meta = session.metadata || {};
   if (!meta.guideId || !meta.routeName) {
     await sr.from('webhook_event_inbox')
-      .update({ status: 'failed', error_message: 'Missing required metadata (guideId, routeName)', processed_at: new Date().toISOString() })
+      .update({
+        status: 'ignored',
+        error_message: 'Missing required metadata (guideId, routeName)',
+        retryable: false,
+        processed_at: new Date().toISOString(),
+      })
       .eq('event_id', eventId);
     console.error(`[Webhook] Session ${sessionId} missing required metadata`);
     return json({ ok: false, error: 'Missing required metadata', eventId }, 400);
@@ -397,18 +376,22 @@ exports.handler = async (event) => {
 
 // ─── Retry Policy (documented) ───────────────────────────────────
 // State machine:
-//   received → processing → completed
-//                      └→ failed (retryable=true)
+//   received → processing → completed | failed | ignored
+//   failed → processing (retry via Stripe Dashboard)
+//   Terminal states: completed, ignored (non-retryable)
+//   Stale recovery: claim_webhook_event RPC handles atomically
 //   On retry delivery:
 //     - completed → skip (return 200)
+//     - ignored → skip (terminal)
 //     - processing (recent) → skip (another worker active)
-//     - processing (stale >5min) → reprocess
+//     - processing (stale >5min) → reprocess (RPC claim)
 //     - failed → reprocess (Stripe Dashboard resend)
-//     - received (stale >5min) → reprocess
+//     - received (stale >5min) → reprocess (RPC claim)
 // 1. Stripe retries: exponential backoff, up to 3 days, ~15 attempts
-// 2. Duplicate protection: webhook_event_inbox.event_id UNIQUE prevents reprocessing
+// 2. Duplicate protection: webhook_event_inbox.event_id UNIQUE + claim_webhook_event RPC
 // 3. Partial failures: recorded as status='failed' + retryable=true in inbox
 // 4. Manual retry: via Stripe Dashboard webhook resend
-// 5. Concurrent safety: atomic claim (UPDATE WHERE status IN ('received','failed'))
-// 6. Alerting: console.error captured by Netlify function logs + any configured alerts
-// 7. Monitoring: query webhook_event_inbox WHERE retryable = true
+// 5. Concurrent safety: atomic claim via claim_webhook_event RPC
+// 6. Terminal states: completed (fulfilment done), ignored (non-checkout, unpaid, invalid metadata)
+// 7. Alerting: console.error captured by Netlify function logs + any configured alerts
+// 8. Monitoring: query webhook_event_inbox WHERE retryable = true
