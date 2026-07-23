@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const Stripe = require('stripe');
+const { authenticate, authenticateAdmin, authenticateGuide, authenticateGuideOwner, authenticateGuideOrAmbassador, createServiceClient } = require('./auth.cjs');
 
 // ─── Rate Limiting Architecture ────────────────────────────────────────
 // LAYER 1 (Primary): Netlify-native rate limiting (exports.config below)
@@ -23,6 +24,7 @@ function headers(cors) {
   };
 }
 
+// json() is defined locally with full CORS headers.
 function json(body, status = 200) {
   return { statusCode: status, headers: headers(true), body: JSON.stringify(body) };
 }
@@ -38,30 +40,10 @@ function reqBody(event) {
   }
 }
 
-function jwtDecode(token) {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-    return {
-      id: payload.sub,
-      email: payload.email,
-      role: payload.user_metadata?.role || payload.app_metadata?.role,
-      user_metadata: payload.user_metadata || {},
-      app_metadata: payload.app_metadata || {},
-    };
-  } catch { return null; }
-}
-
-async function authUser(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  const user = jwtDecode(token);
-  if (!user) return { user: null, error: new Error('Invalid token'), supabase: null };
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  return { user, error: null, supabase };
-}
+// SECURITY: jwtDecode and authUser have been REMOVED.
+// ALL authentication now goes through ./auth.cjs which uses
+// supabase.auth.getUser(token) for cryptographic JWT verification.
+// NEVER re-introduce jwtDecode() for authorization decisions.
 
 // ─── Pricing Engine (Spec v1.4) ───────────────────────────────────────
 const MAX_LISTED_TRIP_PRICE = 100000; // Configurable upper limit (GBP/EUR/USD)
@@ -241,13 +223,59 @@ async function handleStripe(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-    const { routeName, guideName, guideId, price, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining } = reqBody(event);
+    const { routeName, guideId, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining, termsAccepted } = reqBody(event);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
 
-    // Use unified pricing engine
+    // ─── Server-side Terms Enforcement ──────────────────────────────
+    const CURRENT_TERMS_VERSION = 'draft-0.3';
+    const CURRENT_DISCLOSURE_VERSION = 'draft-0.3';
+
+    if (!termsAccepted || !termsAccepted.confirmed || !termsAccepted.insuranceConfirmed) {
+      return json({ error: 'Terms acknowledgement and insurance confirmation are required before booking.' }, 400);
+    }
+
+    // ─── Authoritative Trip Pricing (never trust client price) ──────
+    const guideSb = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const { data: guideRecord, error: guideErr } = await guideSb.from('guides')
+      .select('id, name, trading_name, price, price_currency, status, routes')
+      .eq('id', guideId)
+      .maybeSingle();
+
+    if (guideErr || !guideRecord) {
+      return json({ error: 'Invalid guide. Please refresh and try again.' }, 400);
+    }
+    if (guideRecord.status !== 'published') {
+      return json({ error: 'This guide is not currently accepting bookings.' }, 400);
+    }
+    if (!routeName) {
+      return json({ error: 'Route name is required.' }, 400);
+    }
+    const matchRoute = (guideRecord.routes || []).find(r => r.name === routeName);
+    if (!matchRoute) {
+      return json({ error: `Route "${routeName}" not found for this guide.` }, 400);
+    }
+
+    // Authoritative price: route price, fallback to guide base price
+    const authoritativePrice = Number(matchRoute.price) || Number(guideRecord.price) || 0;
+    if (!Number.isFinite(authoritativePrice) || authoritativePrice <= 0) {
+      return json({ error: 'This route does not have a valid price configured.' }, 400);
+    }
+
+    // Authoritative currency: exclusively from guide record (never trust client)
+    const bookingCurrency = (guideRecord.price_currency || 'usd').toLowerCase();
+    const allowedCurrencies = ['gbp', 'eur', 'usd'];
+    if (!allowedCurrencies.includes(bookingCurrency)) {
+      return json({ error: `Guide has unsupported currency "${bookingCurrency}". Allowed: ${allowedCurrencies.join(', ')}` }, 400);
+    }
+    // Client-submitted currency is deliberately ignored for security.
+    if (currency && currency.toLowerCase() !== bookingCurrency) {
+      safeLog('create-checkout', event, { currency_mismatch: true, client: currency, server: bookingCurrency });
+    }
+
+    // Use unified pricing engine with SERVER-DERIVED price (ignore any client price)
     const pricing = await calculateBookingPrice({
-      tripPrice: price,
-      currency: currency || 'usd',
+      tripPrice: authoritativePrice,
+      currency: bookingCurrency,
       travelers: travelers || 1,
       referralCode: referralCode || null,
       porterTraining: porterTraining || false,
@@ -267,15 +295,22 @@ async function handleStripe(event) {
       }
     }
 
+    // Server-generated authoritative values (never trust client)
+    const serverBookingRef = 'bls_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const serverAcceptedAt = new Date().toISOString();
+
+    // Server-authoritative guide name (never trust client)
+    const authoritativeGuideName = guideRecord.trading_name || guideRecord.name || 'Guide';
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
       customer_email: guestEmail,
       line_items: [{
         price_data: {
-          currency: currency || 'usd',
+          currency: pricing.currency,
           product_data: {
-            name: `${routeName} with ${guideName}`,
+            name: `${routeName} with ${authoritativeGuideName}`,
             description: `${travelers} traveler(s) · ${date} · 20% deposit`,
           },
           unit_amount: Math.round(finalDeposit * 100),
@@ -283,7 +318,7 @@ async function handleStripe(event) {
         quantity: 1,
       }],
       metadata: {
-        guideId, guideName, routeName, travelers: String(travelers), guestName, guestEmail, date,
+        guideId, guideName: authoritativeGuideName, routeName, travelers: String(travelers), guestName, guestEmail, date,
         referralCode: appliedReferral?.code || '',
         referrerUserId: appliedReferral?.referrerUserId || '',
         discountAmount: String(appliedReferral?.discountAmount || 0),
@@ -292,16 +327,25 @@ async function handleStripe(event) {
         grossPlatformFee: String(pricing.grossPlatformFee),
         platformFeePct: String(pricing.platformFeePercentage / 100),
         calculationVersion: pricing.calculationVersion,
+        bookingRef: serverBookingRef,
+        serverAcceptedAt,
+        termsVersion: CURRENT_TERMS_VERSION,
+        disclosureVersion: CURRENT_DISCLOSURE_VERSION,
       },
       success_url: `${origin}/checkout/${guideId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout/${guideId}?payment=cancel`,
     });
 
-    return json({ url: session.url, depositAmount: finalDeposit, discountAmount: appliedReferral?.discountAmount || 0, calculationVersion: pricing.calculationVersion });
+    return json({ url: session.url, depositAmount: finalDeposit, discountAmount: appliedReferral?.discountAmount || 0, calculationVersion: pricing.calculationVersion, bookingRef: serverBookingRef });
   } catch (err) {
     return json({ error: err.message }, 500);
   }
 }
+
+// ─── Webhook processing moved to: netlify/functions/webhook-stripe.cjs ──
+// This function is a separate Netlify function to avoid the /api/* blanket
+// rate limiter. Stripe webhook delivery must not be throttled by customer
+// IP rate limits. Signature verification remains mandatory.
 
 // Helper: find a user by referral code (checks guides, then users)
 async function findReferralByCode(code) {
@@ -365,9 +409,10 @@ async function handleValidateReferral(event) {
   }
 }
 
-// POST /api/confirm-payment — credit BLS Points after successful payment + ambassador commission + persist financial data
-const AMBASSADOR_COMMISSION_RATE = 0.05; // 5% lifetime commission
-
+// POST /api/confirm-payment — READ-ONLY reconciliation endpoint
+// Returns payment/fulfilment status from Stripe and database.
+// All mutations (terms, payments, rewards, commissions) originate from the
+// verified Stripe webhook only. This endpoint never inserts, updates, or credits.
 async function handleConfirmPayment(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
@@ -377,122 +422,79 @@ async function handleConfirmPayment(event) {
 
     const session = await stripe.checkout.sessions.retrieve(sessionId);
     const meta = session.metadata || {};
-    const referralCode = meta.referralCode;
-    const referrerUserId = meta.referrerUserId;
-    const discountAmount = parseFloat(meta.discountAmount || '0');
-    const presentmentCurrency = (meta.presentmentCurrency || 'usd').toLowerCase();
 
     const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
       db: { schema: 'public' },
     });
 
-    const results = {};
+    const results = {
+      sessionId,
+      paymentStatus: session.payment_status,
+      sessionStatus: session.status,
+      bookingRef: meta.bookingRef || null,
+    };
 
-    // ─── Stripe Financial Data ──────────────────────────────────────
-    // Retrieve balance transaction for accurate fee data
-    let stripeFinancialData = null;
+    // Check webhook event inbox for processing status
     try {
-      if (session.payment_intent) {
-        const pi = await stripe.paymentIntents.retrieve(session.payment_intent);
-        if (pi.latest_charge) {
-          const charge = await stripe.charges.retrieve(pi.latest_charge);
-          if (charge.balance_transaction) {
-            const bt = await stripe.balanceTransactions.retrieve(charge.balance_transaction);
-            const processingFee = bt.fee_details ? bt.fee_details.filter(f => f.type === 'charge').reduce((s, f) => s + f.amount, 0) / 100 : null;
-            const conversionFee = bt.fee_details ? bt.fee_details.filter(f => f.type === 'currency_conversion').reduce((s, f) => s + f.amount, 0) / 100 : null;
-            const totalFee = bt.fee / 100;
-            // Settlement fee = total fee - processing fee - conversion fee
-            const settlementFee = (processingFee !== null && conversionFee !== null) ? Math.round((totalFee - processingFee - conversionFee) * 100) / 100 : null;
-
-            stripeFinancialData = {
-              session_id: sessionId,
-              guide_id: meta.guideId || null,
-              guest_name: meta.guestName || null,
-              guest_email: meta.guestEmail || null,
-              route_name: meta.routeName || null,
-              booking_date: meta.date || null,
-              presentment_currency: presentmentCurrency,
-              presentment_amount: parseFloat(meta.presentmentAmount || '0') || (session.amount_total || 0) / 100,
-              settlement_currency: bt.currency,
-              settlement_amount: bt.net / 100,
-              total_stripe_fee: totalFee,
-              net_settlement_amount: bt.net / 100,
-              stripe_balance_transaction_id: bt.id,
-              stripe_processing_fee: processingFee,
-              stripe_conversion_fee: conversionFee,
-              stripe_settlement_fee: settlementFee,
-              referral_code: referralCode || null,
-              referral_discount_amount: discountAmount || 0,
-              gross_platform_fee: parseFloat(meta.grossPlatformFee || '0'),
-              platform_fee_pct: parseFloat(meta.platformFeePct || '0.2'),
-            };
-          }
-        }
-      }
-    } catch (stripeErr) {
-      console.error('Could not retrieve Stripe balance transaction:', stripeErr.message);
-    }
-
-    // ─── Persist financial data to payment_reports table ─────────────
-    if (stripeFinancialData) {
-      try {
-        const { error: insertErr } = await sr.from('payment_reports').insert(stripeFinancialData);
-        if (insertErr) console.error('Failed to persist payment report:', insertErr.message);
-        results.stripeFinancials = stripeFinancialData;
-      } catch (insertEx) {
-        console.error('payment_reports insert error:', insertEx.message);
-      }
-    }
-
-    // ─── Traveller Referral Points ───────────────────────────────────
-    if (referralCode && referrerUserId && discountAmount > 0) {
-      const { data: guide } = await sr.from('guides').select('id, bls_points_balance').eq('referral_code', referralCode).maybeSingle();
-      const { data: userRec } = await sr.from('users').select('id, bls_points_balance').eq('referral_code', referralCode).maybeSingle();
-
-      const isGuide = !!guide;
-      const targetTable = isGuide ? 'guides' : 'users';
-      const record = isGuide ? guide : userRec;
-      if (record) {
-        const pointsToCredit = discountAmount;
-        const newBalance = (record.bls_points_balance || 0) + pointsToCredit;
-        await sr.from(targetTable).update({ bls_points_balance: newBalance }).eq('id', record.id);
-        await sr.from('transactions').insert({
-          user_id: referrerUserId,
-          amount: pointsToCredit,
-          type: 'credit',
-          reason: `Referral bonus: ${meta.guestName || 'a traveller'} booked ${meta.routeName || 'a trip'} with ${meta.guideName || 'a guide'}`,
-          linked_referral_code: referralCode,
-          linked_booking_id: sessionId,
-        });
-        results.referral = { credited: true, pointsAdded: pointsToCredit, newBalance };
-      }
-    }
-
-    // ─── Ambassador 5% Lifetime Commission ──────────────────────────
-    const guideId = meta.guideId;
-    if (guideId) {
-      const { data: guideRecord } = await sr.from('guides')
-        .select('id, referred_by_ambassador_id, bls_points_balance, name')
-        .eq('id', guideId)
+      const { data: inboxEvent } = await sr.from('webhook_event_inbox')
+        .select('status, error_message, processed_at, received_at')
+        .eq('stripe_session_id', sessionId)
         .maybeSingle();
-
-      if (guideRecord?.referred_by_ambassador_id) {
-        const amountCharged = (session.amount_total || 0) / 100;
-        const commissionAmount = Math.round(amountCharged * AMBASSADOR_COMMISSION_RATE * 100) / 100;
-
-        if (commissionAmount > 0) {
-          const ambassadorId = guideRecord.referred_by_ambassador_id;
-          await sr.from('transactions').insert({
-            user_id: ambassadorId,
-            amount: commissionAmount,
-            type: 'credit',
-            reason: `Ambassador commission (5%): ${meta.guestName || 'a traveller'} booked ${meta.routeName || 'a trip'} with guide ${guideRecord.name || guideId}`,
-            linked_booking_id: sessionId,
-          });
-          results.ambassadorCommission = { credited: true, amount: commissionAmount, ambassadorId };
-        }
+      if (inboxEvent) {
+        results.webhookStatus = inboxEvent.status;
+        results.webhookProcessedAt = inboxEvent.processed_at;
+        results.webhookError = inboxEvent.error_message;
+      } else {
+        results.webhookStatus = 'not_received';
       }
-    }
+    } catch { results.webhookStatus = 'unknown'; }
+
+    // Check terms acceptance persistence
+    try {
+      const { data: termsRecord } = await sr.from('terms_acceptance')
+        .select('id, terms_version, created_at')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+      results.termsAccepted = termsRecord ? { persisted: true, termsVersion: termsRecord.terms_version, createdAt: termsRecord.created_at } : { persisted: false };
+    } catch { results.termsAccepted = { persisted: false, error: 'query_failed' }; }
+
+    // Check booking confirmation persistence
+    try {
+      const { data: bookingRecord } = await sr.from('booking_confirmations')
+        .select('id, booking_ref, created_at')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+      results.bookingConfirmed = bookingRecord ? { persisted: true, bookingRef: bookingRecord.booking_ref, createdAt: bookingRecord.created_at } : { persisted: false };
+    } catch { results.bookingConfirmed = { persisted: false, error: 'query_failed' }; }
+
+    // Check payment report persistence
+    try {
+      const { data: paymentReport } = await sr.from('payment_reports')
+        .select('id, presentment_amount, total_stripe_fee, created_at')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+      results.paymentReport = paymentReport ? { persisted: true, amount: paymentReport.presentment_amount, fee: paymentReport.total_stripe_fee, createdAt: paymentReport.created_at } : { persisted: false };
+    } catch { results.paymentReport = { persisted: false, error: 'query_failed' }; }
+
+    // Check referral reward status
+    try {
+      const idempotencyKey = `referral_${sessionId}`;
+      const { data: referralTxn } = await sr.from('transactions')
+        .select('id, amount, created_at')
+        .eq('idempotency_key', idempotencyKey)
+        .maybeSingle();
+      results.referralReward = referralTxn ? { credited: true, amount: referralTxn.amount, createdAt: referralTxn.created_at } : { credited: false };
+    } catch { results.referralReward = { credited: false, error: 'query_failed' }; }
+
+    // Check ambassador commission status
+    try {
+      const idempotencyKey = `ambassador_${sessionId}`;
+      const { data: ambTxn } = await sr.from('transactions')
+        .select('id, amount, created_at')
+        .eq('idempotency_key', idempotencyKey)
+        .maybeSingle();
+      results.ambassadorCommission = ambTxn ? { credited: true, amount: ambTxn.amount, createdAt: ambTxn.created_at } : { credited: false };
+    } catch { results.ambassadorCommission = { credited: false, error: 'query_failed' }; }
 
     return json(results);
   } catch (err) {
@@ -502,29 +504,30 @@ async function handleConfirmPayment(event) {
 
 // GET /api/rewards — fetch balance + transaction history
 async function handleRewards(event) {
-  const { user, error: authErr, supabase: sr } = await authUser(event);
-  if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+  const result = await authenticate(event);
+  if (result.statusCode) return result;
+  const { user, profile, supabase: sr } = result;
 
   // Get balance from guides or users table
-  const isGuide = user.role === 'guide';
+  const isGuide = profile.role === 'guide';
   const table = isGuide ? 'guides' : 'users';
   const filterField = isGuide ? 'user_id' : 'id';
-  const { data: profile } = await sr.from(table).select('referral_code, bls_points_balance, trading_name, name').eq(filterField, user.id).maybeSingle();
-  if (!profile) return json({ error: 'Profile not found' }, 404);
+  const { data: profileData } = await sr.from(table).select('referral_code, bls_points_balance, trading_name, name').eq(filterField, user.id).maybeSingle();
+  if (!profileData) return json({ error: 'Profile not found' }, 404);
 
   // Get transaction history
   const { data: transactions } = await sr.from('transactions').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(50);
 
   // Auto-generate referral code if missing
-  let referralCode = profile.referral_code;
+  let referralCode = profileData.referral_code;
   if (!referralCode) {
-    referralCode = await generateReferralCode(user, table, isGuide ? profile.trading_name : profile.name, sr);
+    referralCode = await generateReferralCode(user, table, isGuide ? profileData.trading_name : profileData.name, sr);
     await sr.from(table).update({ referral_code: referralCode }).eq(filterField, user.id);
   }
 
   return json({
     referralCode,
-    balance: profile.bls_points_balance || 0,
+    balance: profileData.bls_points_balance || 0,
     transactions: transactions || [],
   });
 }
@@ -741,18 +744,11 @@ async function handleApplyAmbassador(event) {
 
 // ─── Admin Applications ───────────────────────────────────────────────
 async function handleApplications(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  const decoded = jwtDecode(token);
-  if (!decoded || !decoded.id) return json({ error: 'Unauthorized' }, 401);
+  const result = await authenticateAdmin(event);
+  if (result.statusCode) return result;
+  const { user, profile: adminProfile, supabase: supabaseClient } = result;
 
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-  });
-  const { data: userRecord } = await supabase.from('users').select('role').eq('id', decoded.id).maybeSingle();
-  const adminRole = userRecord?.role || decoded.role;
-  if (adminRole !== 'admin') return json({ error: `Forbidden: admin access required (role: "${adminRole}")` }, 403);
+  const supabase = supabaseClient;
 
   if (event.httpMethod === 'GET') {
     const type = event.queryStringParameters?.type || new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
@@ -829,77 +825,82 @@ async function handleApplications(event) {
 
 // ─── Guide Profile ────────────────────────────────────────────────────
 async function handleGuideProfile(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  const user = jwtDecode(token);
-  if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
-  if (user.role !== 'guide') return json({ error: `Guide access required (role: "${user.role}")` }, 403);
-
   const method = event.httpMethod;
   const rawPath = event.path || '';
   const path = rawPath.replace(/^.*?\/guide-profile\/?/, '').split('/').filter(Boolean);
 
-  const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-  });
+  // POST /submit only needs guide role (existing profile check happens later)
+  if (method === 'POST' && path[0] === 'submit') {
+    const result = await authenticateGuide(event);
+    if (result.statusCode) return result;
+    const { user, supabase: sr } = result;
+
+    const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    if (!existing) return json({ error: 'Guide profile not found' }, 404);
+    if (existing.status === 'published') return json({ error: 'Already published' }, 400);
+    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
+    if (updErr) return json({ error: updErr.message }, 500);
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    if (fetchErr) return json({ error: fetchErr.message }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated' }, 500);
+
+    try {
+      if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
+        const html = `<h2>Guide Profile Ready for Review</h2><p><strong>${existing.trading_name || 'Unnamed Guide'}</strong> has submitted their profile.</p><table style="border-collapse:collapse;width:100%">${
+          [['Name', existing.trading_name], ['Location', existing.location],
+           ['Price', existing.price ? '$' + existing.price : '—'],
+           ['Languages', Array.isArray(existing.languages) ? existing.languages.join(', ') : existing.languages],
+           ['Experience', existing.experience + ' years'],
+           ['Routes', (existing.routes || []).length]].map(([k, v]) =>
+            `<tr style="border:1px solid #ddd"><td style="padding:6px;font-weight:700">${k}</td><td style="padding:6px">${v || '—'}</td></tr>`
+          ).join('')}</table><p><a href="https://bucketlistspots.com/admin/applications" style="background:#2A9D8F;color:#FFF;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:10px">Review in Dashboard</a></p><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'BucketListSpots <notifications@bucketlistspots.com>',
+            to: process.env.NOTIFICATION_EMAIL,
+            subject: `Guide Profile Ready: ${existing.trading_name || 'Unnamed Guide'} submitted for review`,
+            html,
+          }),
+        });
+      }
+    } catch (mailErr) { console.error('Email send failed:', mailErr); }
+
+    return json(data);
+  }
+
+  // All other guide profile operations require verified guide ownership
+  const authResult = await authenticateGuideOwner(event);
+  if (authResult.statusCode) return authResult;
+  const { user, supabase: sr, guide } = authResult;
 
   // GET — fetch my profile + routes
   if (method === 'GET') {
-    const { data: guide, error } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (error) return json({ error: error.message }, 500);
-    return json(guide || null);
+    return json(guide);
   }
 
   // PUT — create or update profile
   if (method === 'PUT') {
     const body = reqBody(event);
+    // P0-2 SECURITY FIX: Only content/branding fields allowed.
+    // Never allow: status, featured, verification flags, balances, referral, ownership fields.
     const allowed = ['trading_name', 'photo', 'hero_image', 'bio', 'why_independent', 'location',
-      'languages', 'experience', 'certifications', 'promise', 'badge', 'price', 'price_currency', 'status'];
+      'languages', 'experience', 'certifications', 'promise', 'badge', 'tagline',
+      'video_intro', 'tripadvisor_embed'];
     const updates = {};
     for (const key of allowed) {
       if (body[key] !== undefined) updates[key] = body[key];
     }
 
-    const { data: existing } = await sr.from('guides').select('id').eq('user_id', user.id).maybeSingle();
+    // Force status to remain at current value — guides cannot self-publish
+    // (Status can only be changed by POST /submit which sets 'pending',
+    //  or by admin via handleApplications PATCH)
 
-    if (existing) {
-      updates.updated_at = new Date().toISOString();
-      const { data, error } = await sr.from('guides').update(updates).eq('user_id', user.id).select().single();
-      if (error) return json({ error: error.message }, 500);
-      return json(data);
-    } else {
-      updates.user_id = user.id;
-      updates.status = 'draft';
-      updates.id = user.id.replace(/-/g, '').slice(0, 12);
-      updates.name = updates.trading_name || user.email?.split('@')[0] || 'Guide';
-
-      // Auto-link ambassador if this guide was referred via an ambassador code
-      if (!updates.referred_by_ambassador_id) {
-        try {
-          const { data: app } = await sr.from('guide_applications')
-            .select('referred_by_ambassador_code')
-            .eq('email', user.email)
-            .not('referred_by_ambassador_code', 'is', null)
-            .maybeSingle();
-          if (app?.referred_by_ambassador_code) {
-            const { data: ambassador } = await sr.from('users')
-              .select('id')
-              .eq('referral_code', app.referred_by_ambassador_code)
-              .maybeSingle();
-            if (ambassador) {
-              updates.referred_by_ambassador_id = ambassador.id;
-            }
-          }
-        } catch (e) {
-          console.error('Ambassador link failed:', e.message);
-        }
-      }
-
-      const { data, error } = await sr.from('guides').insert(updates).select().single();
-      if (error) return json({ error: error.message }, 500);
-      return json(data, 201);
-    }
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await sr.from('guides').update(updates).eq('user_id', user.id).select().single();
+    if (error) return json({ error: error.message }, 500);
+    return json(data);
   }
 
   // POST /routes — add a route
@@ -937,51 +938,14 @@ async function handleGuideProfile(event) {
     return json(data);
   }
 
-  // POST /submit — submit for admin review
-  if (method === 'POST' && path[0] === 'submit') {
-    const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (!existing) return json({ error: 'Guide profile not found' }, 404);
-    if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
-    if (updErr) return json({ error: updErr.message }, 500);
-    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (fetchErr) return json({ error: fetchErr.message }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated' }, 500);
-
-    try {
-      if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
-        const html = `<h2>Guide Profile Ready for Review</h2><p><strong>${existing.trading_name || 'Unnamed Guide'}</strong> has submitted their profile.</p><table style="border-collapse:collapse;width:100%">${
-          [['Name', existing.trading_name], ['Location', existing.location],
-           ['Price', existing.price ? '$' + existing.price : '—'],
-           ['Languages', Array.isArray(existing.languages) ? existing.languages.join(', ') : existing.languages],
-           ['Experience', existing.experience + ' years'],
-           ['Routes', (existing.routes || []).length]].map(([k, v]) =>
-            `<tr style="border:1px solid #ddd"><td style="padding:6px;font-weight:700">${k}</td><td style="padding:6px">${v || '—'}</td></tr>`
-          ).join('')}</table><p><a href="https://bucketlistspots.com/admin/applications" style="background:#2A9D8F;color:#FFF;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:10px">Review in Dashboard</a></p><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
-        await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: 'BucketListSpots <notifications@bucketlistspots.com>',
-            to: process.env.NOTIFICATION_EMAIL,
-            subject: `Guide Profile Ready: ${existing.trading_name || 'Unnamed Guide'} submitted for review`,
-            html,
-          }),
-        });
-      }
-    } catch (mailErr) { console.error('Email send failed:', mailErr); }
-
-    return json(data);
-  }
-
   return json({ error: 'Method not allowed' }, 405);
 }
 
 // ─── Debug Auth ───────────────────────────────────────────────────────
 async function handleDebugAuth(event) {
-  const { user, error: authErr, supabase } = await authUser(event);
-  if (authErr || !user) return json({ error: 'Unauthorized', detail: authErr?.message }, 401);
-  const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+  const result = await authenticate(event);
+  if (result.statusCode) return result;
+  const { user, profile, supabase } = result;
   const srkSet = !!(process.env.SUPABASE_SERVICE_ROLE_KEY);
   const srkLen = process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.length : 0;
   // Try inserting a test row using service role key (should bypass RLS)
@@ -990,10 +954,10 @@ async function handleDebugAuth(event) {
   if (insertErr) {
     // Also try listing existing guides
     const { data: guides, error: listErr } = await supabase.from('guides').select('id').limit(5);
-    return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertError: insertErr.message, listError: listErr?.message, guideCount: guides?.length });
+    return json({ userId: user.id, email: user.email, profile, profErr: null, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertError: insertErr.message, listError: listErr?.message, guideCount: guides?.length });
   }
   await supabase.from('guides').delete().eq('id', testId);
-  return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertTest: 'OK' });
+  return json({ userId: user.id, email: user.email, profile, profErr: null, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertTest: 'OK' });
 }
 
 // ─── Charity Challenges ───────────────────────────────────────────────
@@ -1040,8 +1004,9 @@ async function handleCharities(event) {
 async function handleCreateFundraising(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
-    const { user, error: authErr, supabase: sr } = await authUser(event);
-    if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, profile: userProfile, supabase: sr } = authResult;
 
     const { charityId, charityApiId, charityName, pageTitle, targetAmount, currency, eventDate, bookingId } = reqBody(event);
     if (!charityApiId || !pageTitle || !targetAmount) {
@@ -1060,12 +1025,12 @@ async function handleCreateFundraising(event) {
       targetAmount: parseFloat(targetAmount),
       currency: currency || 'GBP',
       eventDate,
-      userName: user.name || user.email,
+      userName: userProfile.name || verifiedUser.email,
     });
 
     // Save to database
     const { data: saved, error: dbErr } = await sr.from('fundraising_pages').insert({
-      user_id: user.id,
+      user_id: verifiedUser.id,
       booking_id: bookingId || null,
       charity_id: charityId || null,
       charity_api_id: charityApiId,
@@ -1102,13 +1067,14 @@ async function handleCreateFundraising(event) {
 async function handleMyFundraising(event) {
   if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
   try {
-    const { user, error: authErr, supabase: sr } = await authUser(event);
-    if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, supabase: sr } = authResult;
 
     const { data: pages, error } = await sr
       .from('fundraising_pages')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', verifiedUser.id)
       .order('created_at', { ascending: false });
 
     if (error) return json({ error: error.message }, 500);
@@ -1150,8 +1116,9 @@ async function handleMyFundraising(event) {
 async function handleSyncFundraising(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
-    const { user, error: authErr, supabase: sr } = await authUser(event);
-    if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, supabase: sr } = authResult;
 
     const { pageId } = reqBody(event);
     if (!pageId) return json({ error: 'Missing pageId' }, 400);
@@ -1161,7 +1128,7 @@ async function handleSyncFundraising(event) {
       .from('fundraising_pages')
       .select('*')
       .eq('id', pageId)
-      .eq('user_id', user.id)
+      .eq('user_id', verifiedUser.id)
       .maybeSingle();
 
     if (fetchErr || !page) return json({ error: 'Page not found' }, 404);
@@ -1231,20 +1198,13 @@ async function handleCharityWebhook(event) {
 
 // ─── Posts / News ─────────────────────────────────────────────────────
 async function handlePosts(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  let user = null;
-  try { user = jwtDecode(token); } catch { /* no auth — fine for GET */ }
-  const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-  });
+  const sr = createServiceClient();
   const url = new URL(event.url, 'http://localhost');
   const method = event.httpMethod;
   const path = url.pathname.replace(/^.*?\/api\/posts\/?/, '').split('/').filter(Boolean);
   const postId = path[0];
 
-  // GET /posts — fetch all posts or by user_id
+  // GET /posts — fetch all posts or by user_id (public, no auth required)
   if (method === 'GET') {
     const userId = url.searchParams.get('user_id');
     const authorRole = url.searchParams.get('author_role');
@@ -1256,38 +1216,40 @@ async function handlePosts(event) {
     return json(data || []);
   }
 
-  // POST /posts — create a post
+  // POST /posts — create a post (requires verified guide or ambassador)
   if (method === 'POST') {
-    if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
-    if (user.role !== 'guide' && user.role !== 'ambassador') return json({ error: 'Only guides and ambassadors can post' }, 403);
+    const authResult = await authenticateGuideOrAmbassador(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, profile: userProfile, supabase: authSr } = authResult;
+
     const body = reqBody(event);
     if (!body.content || body.content.length > 600) return json({ error: 'Content is required and must be 600 characters or less' }, 400);
-    // Look up author name
-    let authorName = user.email;
-    if (user.role === 'guide') {
-      const { data: g } = await sr.from('guides').select('trading_name').eq('user_id', user.id).maybeSingle();
+    // Look up author name from database profile
+    let authorName = userProfile.name || verifiedUser.email;
+    if (userProfile.role === 'guide') {
+      const { data: g } = await sr.from('guides').select('trading_name').eq('user_id', verifiedUser.id).maybeSingle();
       if (g?.trading_name) authorName = g.trading_name;
     }
-    console.log('[posts] Inserting:', { id: 'pst_' + Date.now(), user_id: user.id, content: body.content });
     const { data, error } = await sr.from('posts').insert({
       id: 'pst_' + Date.now(),
-      user_id: user.id,
-      author_role: user.role,
+      user_id: verifiedUser.id,
+      author_role: userProfile.role,
       author_name: authorName,
       content: body.content,
       image_url: body.image_url || null,
       video_url: body.video_url || null,
     }).select().single();
-    console.log('[posts] Insert result:', { data, error: error?.message });
     if (error) return json({ error: error.message }, 500);
     return json(data, 201);
   }
 
-  // DELETE /posts/:id — delete own post
+  // DELETE /posts/:id — delete own post (requires verified auth)
   if (method === 'DELETE') {
-    if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, supabase: authSr } = authResult;
     if (!postId) return json({ error: 'Missing post id' }, 400);
-    const { error } = await sr.from('posts').delete().eq('id', postId).eq('user_id', user.id);
+    const { error } = await sr.from('posts').delete().eq('id', postId).eq('user_id', verifiedUser.id);
     if (error) return json({ error: error.message }, 500);
     return json({ ok: true });
   }
@@ -1302,13 +1264,9 @@ async function handlePosts(event) {
 async function handleAdminPaymentReports(event) {
   if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
   try {
-    const token = (event.headers.authorization || '').replace('Bearer ', '');
-    if (!token) return json({ error: 'Unauthorized' }, 401);
-    let user;
-    try { user = jwtDecode(token); } catch { return json({ error: 'Invalid token' }, 401); }
-    if (user.role !== 'admin') return json({ error: 'Admin access required' }, 403);
-
-    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const authResult = await authenticateAdmin(event);
+    if (authResult.statusCode) return authResult;
+    const { supabase: sr } = authResult;
     const url = new URL(event.url, 'http://localhost');
     const format = url.searchParams.get('format') || 'json';
     const currency = url.searchParams.get('currency');
@@ -1381,13 +1339,9 @@ async function handleAdminPaymentReports(event) {
 // GET/PUT /api/admin/platform-config — view/update commission settings (admin-only)
 async function handleAdminPlatformConfig(event) {
   try {
-    const token = (event.headers.authorization || '').replace('Bearer ', '');
-    if (!token) return json({ error: 'Unauthorized' }, 401);
-    let user;
-    try { user = jwtDecode(token); } catch { return json({ error: 'Invalid token' }, 401); }
-    if (user.role !== 'admin') return json({ error: 'Admin access required' }, 403);
-
-    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const authResult = await authenticateAdmin(event);
+    if (authResult.statusCode) return authResult;
+    const { supabase: sr } = authResult;
 
     if (event.httpMethod === 'GET') {
       const { data, error } = await sr.from('platform_config').select('*').eq('id', 1).maybeSingle();

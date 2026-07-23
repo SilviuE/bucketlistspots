@@ -8,6 +8,13 @@
   to = "/.netlify/functions/api/:splat"
   status = 200
 
+# Stripe webhook: separate function, NOT under /api/* to avoid blanket IP rate limiter.
+# Stripe must be able to deliver webhooks without customer-facing throttling.
+[[redirects]]
+  from = "/webhooks/stripe"
+  to = "/.netlify/functions/webhook-stripe"
+  status = 200
+
 [[redirects]]
   from = "/guides"
   to = "/for-guides"

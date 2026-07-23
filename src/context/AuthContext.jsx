@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabaseClient';
 
 const AuthContext = createContext(null);
 
+// SECURITY: Only safe columns are loaded from the users table in the browser.
+// NEVER select referral_code, bls_points_balance, or other server-only fields.
+const SAFE_USER_COLUMNS = 'id, email, name, role, created_at';
+
 function load(key, fallback) {
   try {
     const stored = localStorage.getItem(key);
@@ -44,7 +48,7 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
-        supabase.from('users').select('*').eq('id', session.user.id).single()
+        supabase.from('users').select(SAFE_USER_COLUMNS).eq('id', session.user.id).single()
           .then(({ data }) => {
             if (data) {
               setUser(data);
@@ -62,7 +66,7 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       if (session?.user) {
-        supabase.from('users').select('*').eq('id', session.user.id).single()
+        supabase.from('users').select(SAFE_USER_COLUMNS).eq('id', session.user.id).single()
           .then(({ data }) => {
             if (data) {
               setUser(data);
@@ -89,7 +93,9 @@ export function AuthProvider({ children }) {
       options: {
         data: {
           name: userData.name,
-          role: userData.role || 'traveller',
+          // SECURITY: role is NEVER set client-side. The database trigger
+          // assigns the correct default role ('traveller'). Role changes
+          // can ONLY happen server-side via admin approval.
         },
       },
     });
@@ -101,21 +107,16 @@ export function AuthProvider({ children }) {
 
     const { data: profile } = await supabase
       .from('users')
-      .select('*')
+      .select(SAFE_USER_COLUMNS)
       .eq('id', authData.user.id)
       .single();
 
     if (profile) {
-      const role = userData.role || 'traveller';
-      if (profile.role !== role) {
-        await supabase.from('users').update({ role }).eq('id', authData.user.id);
-        profile.role = role;
-      }
+      // SECURITY: NEVER write role from client-side. Read from DB only.
       setUser(profile);
       save('bls_user', profile);
     } else {
       const fallback = buildFallbackUser(authData.user);
-      fallback.role = userData.role || 'traveller';
       setUser(fallback);
       save('bls_user', fallback);
     }
@@ -130,24 +131,21 @@ export function AuthProvider({ children }) {
     if (authError) return { error: authError.message };
     if (!authData.user) return { error: 'Login failed' };
 
-    const role = authData.user.user_metadata?.role || authData.user.app_metadata?.role || 'traveller';
+    // SECURITY: NEVER sync role from JWT metadata to users table.
+    // Role is the database source of truth — read from DB only.
+    // The only place role can be changed is server-side via admin approval.
 
     const { data: profile } = await supabase
       .from('users')
-      .select('*')
+      .select(SAFE_USER_COLUMNS)
       .eq('id', authData.user.id)
       .single();
 
     if (profile) {
-      if (profile.role !== role) {
-        await supabase.from('users').update({ role }).eq('id', authData.user.id);
-        profile.role = role;
-      }
       setUser(profile);
       save('bls_user', profile);
     } else {
       const fallback = buildFallbackUser(authData.user);
-      fallback.role = role;
       setUser(fallback);
       save('bls_user', fallback);
     }
@@ -160,11 +158,20 @@ export function AuthProvider({ children }) {
     save('bls_user', null);
   }, []);
 
+  // SECURITY: updateProfile uses an explicit safe-field allowlist.
+  // Users can NEVER modify: role, referral_code, bls_points_balance,
+  // or any administrative/financial fields from the browser.
+  const SAFE_PROFILE_FIELDS = ['name', 'avatar'];
   const updateProfile = useCallback(async (updates) => {
     if (!user) return;
-    const { error } = await supabase.from('users').update(updates).eq('id', user.id);
+    const safeUpdates = {};
+    for (const key of SAFE_PROFILE_FIELDS) {
+      if (updates[key] !== undefined) safeUpdates[key] = updates[key];
+    }
+    if (Object.keys(safeUpdates).length === 0) return { error: 'No valid fields to update' };
+    const { error } = await supabase.from('users').update(safeUpdates).eq('id', user.id);
     if (!error) {
-      const updated = { ...user, ...updates };
+      const updated = { ...user, ...safeUpdates };
       setUser(updated);
       save('bls_user', updated);
     }
