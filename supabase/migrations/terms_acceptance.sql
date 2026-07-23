@@ -54,7 +54,7 @@ BEGIN
   RAISE EXCEPTION 'terms_acceptance records are immutable. UPDATE and DELETE operations are not permitted.';
   RETURN NULL;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = '';
 
 DROP TRIGGER IF EXISTS trg_reject_terms_update ON terms_acceptance;
 CREATE TRIGGER trg_reject_terms_update
