@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Box, Container, Typography, Button, Paper, Avatar, Divider, TextField, MenuItem, Stepper, Step, StepLabel, Alert, Chip, CircularProgress, Collapse,
+  Box, Container, Typography, Button, Paper, Avatar, Divider, TextField, MenuItem, Stepper, Step, StepLabel, Alert, Chip, CircularProgress, Collapse, Checkbox, FormControlLabel,
 } from '@mui/material';
 import SEO from '../components/SEO';
 import CharityChallengeCTA from '../components/CharityChallengeCTA';
@@ -178,13 +178,8 @@ const validateReferral = async (code) => {
       referralCode: referralStatus === 'valid' ? referralCode.toUpperCase() : '',
       referralDiscount: referralStatus === 'valid' ? referralDiscount : 0,
       termsAccepted: {
-        termsVersion: 'draft-0.3',
-        disclosureVersion: 'draft-0.3',
-        acceptedAt: new Date().toISOString(),
-        bookingRef: 'bk_' + Date.now(),
-        departureDate: date,
-        depositAmount: totalDeposit,
-        currency,
+        confirmed,
+        insuranceConfirmed,
       },
     };
     sessionStorage.setItem('pending_booking', JSON.stringify(pendingBooking));
@@ -206,13 +201,6 @@ const validateReferral = async (code) => {
           currency: stripeCurrency(currency),
           referralCode: referralStatus === 'valid' ? referralCode.toUpperCase() : '',
           termsAccepted: {
-            termsVersion: 'draft-0.3',
-            disclosureVersion: 'draft-0.3',
-            acceptedAt: new Date().toISOString(),
-            bookingRef: 'bk_' + Date.now(),
-            departureDate: date,
-            depositAmount: totalDeposit,
-            currency,
             confirmed,
             insuranceConfirmed,
           },
@@ -220,6 +208,10 @@ const validateReferral = async (code) => {
       });
       const data = await res.json();
       if (data.url) {
+        // Save booking with server-generated ref before redirect
+        pendingBooking.bookingRef = data.bookingRef || pendingBooking.id;
+        pendingBooking.termsVersion = 'draft-0.3';
+        sessionStorage.setItem('pending_booking', JSON.stringify(pendingBooking));
         window.location.href = data.url;
       } else {
         alert('Payment failed: ' + (data.error || 'Unknown error'));
@@ -496,49 +488,67 @@ const validateReferral = async (code) => {
           </Alert>
 
           <Alert severity="warning" sx={{ mb: 2, borderRadius: 2, fontSize: 11 }}>
-            <strong>Cancellation:</strong> You may cancel within 48 hours for a full monetary refund of your Booking Lock Payment. After the grace period, the Booking Lock Payment converts into a Deposit Credit for future use (non-refundable, 12-month expiry). Payment 2 is refunded in full if not yet paid. See Terms sections 6 and 7 for full details.
+            <strong>Cancellation:</strong> You may cancel within 48 hours for a full monetary refund of your Booking Lock Payment. After the grace period, the Booking Lock Payment converts into a Deposit Credit for future use. Any Payment 2 amounts already paid will be refunded in full. See Terms sections 6 and 7 for full details.
           </Alert>
 
-          <Box sx={{ p: 2, mb: 2, bgcolor: '#FFF', borderRadius: 2, border: '1px solid rgba(16,42,67,0.12)', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
-            onClick={() => setConfirmed(!confirmed)}
-          >
-            <Box sx={{ width: 20, height: 20, borderRadius: 0.5, border: '2px solid', borderColor: confirmed ? '#2A9D8F' : 'rgba(16,42,67,0.3)', bgcolor: confirmed ? '#2A9D8F' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.2, flexShrink: 0, color: '#FFF', fontSize: 12, fontWeight: 700 }}>
-              {confirmed && '✓'}
-            </Box>
-            <Typography variant="caption" color="text.secondary">
-              <strong>I acknowledge</strong> that I have read and accept the{'\n'}
-              <strong>BucketListSpots Terms of Service</strong> (including sections 6 and 7 on payments, cancellations, and the 48-hour grace period) and{'\n'}
-              <strong>{guide.name}'s Booking Conditions</strong>.
-            </Typography>
-          </Box>
-
-          <Box sx={{ p: 2, mb: 2, bgcolor: '#FFF', borderRadius: 2, border: '1px solid rgba(16,42,67,0.12)', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
-            onClick={() => setInsuranceConfirmed(!insuranceConfirmed)}
-          >
-            <Box sx={{ width: 20, height: 20, borderRadius: 0.5, border: '2px solid', borderColor: insuranceConfirmed ? '#E05D3A' : 'rgba(16,42,67,0.3)', bgcolor: insuranceConfirmed ? '#E05D3A' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.2, flexShrink: 0, color: '#FFF', fontSize: 12, fontWeight: 700 }}>
-              {insuranceConfirmed && '✓'}
-            </Box>
-            <Typography variant="caption" color="text.secondary">
-              <strong>Travel Insurance:</strong> I understand that arranging adequate travel insurance (covering high-altitude trekking up to 6,000m and medical evacuation) is <strong>my sole responsibility</strong>. BucketListSpots Ltd is not authorized or regulated by the FCA to provide insurance advice.{'\n'}
-              <em>Any insurance links on this platform are for informational purposes only.</em>
-            </Typography>
-          </Box>
-
-          <Box sx={{ p: 2, mb: 2, bgcolor: '#f0faf8', borderRadius: 2, border: '1px solid #2A9D8F30', display: 'flex', alignItems: 'flex-start', gap: 1.5, cursor: 'pointer', '&:hover': { borderColor: '#2A9D8F' } }}
-            onClick={() => setPorterTraining(!porterTraining)}
-          >
-            <Box sx={{ width: 20, height: 20, borderRadius: 0.5, border: '2px solid', borderColor: porterTraining ? '#2A9D8F' : 'rgba(16,42,67,0.3)', bgcolor: porterTraining ? '#2A9D8F' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.2, flexShrink: 0, color: '#FFF', fontSize: 12, fontWeight: 700 }}>
-              {porterTraining && '✓'}
-            </Box>
-            <Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                sx={{ color: 'rgba(16,42,67,0.3)', '&.Mui-checked': { color: '#2A9D8F' } }}
+                inputProps={{ 'aria-label': 'Accept Terms of Service' }}
+              />
+            }
+            label={
               <Typography variant="caption" color="text.secondary">
-                <strong>Sponsor a Porter's First-Aid Training</strong> (+{formatPrice(10, currency)})
+                <strong>I acknowledge</strong> that I have read and accept the{' '}
+                <strong>BucketListSpots Terms of Service</strong> (including sections 6 and 7 on payments, cancellations, and the 48-hour grace period) and{' '}
+                <strong>{guide.name}'s Booking Conditions</strong>.
               </Typography>
-              <Typography variant="caption" display="block" sx={{ color: 'text.secondary', fontSize: 11, mt: 0.3 }}>
-                Your {formatPrice(10, currency)} funds Wilderness First Responder certification for a local porter. This makes the mountain safer and helps porters earn higher wages.
+            }
+            sx={{ mb: 1, alignItems: 'flex-start', mx: 0 }}
+          />
+
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={insuranceConfirmed}
+                onChange={(e) => setInsuranceConfirmed(e.target.checked)}
+                sx={{ color: 'rgba(16,42,67,0.3)', '&.Mui-checked': { color: '#E05D3A' } }}
+                inputProps={{ 'aria-label': 'Confirm travel insurance arrangement' }}
+              />
+            }
+            label={
+              <Typography variant="caption" color="text.secondary">
+                <strong>Travel Insurance:</strong> I understand that arranging adequate travel insurance (covering high-altitude trekking up to 6,000m and medical evacuation) is <strong>my sole responsibility</strong>. BucketListSpots Ltd is not authorized or regulated by the FCA to provide insurance advice.{' '}
+                <em>Any insurance links on this platform are for informational purposes only.</em>
               </Typography>
-            </Box>
-          </Box>
+            }
+            sx={{ mb: 1, alignItems: 'flex-start', mx: 0 }}
+          />
+
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={porterTraining}
+                onChange={(e) => setPorterTraining(e.target.checked)}
+                sx={{ color: 'rgba(16,42,67,0.3)', '&.Mui-checked': { color: '#2A9D8F' } }}
+                inputProps={{ 'aria-label': 'Sponsor porter first-aid training' }}
+              />
+            }
+            label={
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  <strong>Sponsor a Porter's First-Aid Training</strong> (+{formatPrice(10, currency)})
+                </Typography>
+                <Typography variant="caption" display="block" sx={{ color: 'text.secondary', fontSize: 11, mt: 0.3 }}>
+                  Your {formatPrice(10, currency)} funds Wilderness First Responder certification for a local porter. This makes the mountain safer and helps porters earn higher wages.
+                </Typography>
+              </Box>
+            }
+            sx={{ mb: 2, alignItems: 'flex-start', mx: 0, bgcolor: '#f0faf8', borderRadius: 2, border: '1px solid #2A9D8F30', p: 1.5 }}
+          />
 
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button variant="outlined" onClick={() => setStep(1)} sx={{ flex: 1 }}>Back</Button>

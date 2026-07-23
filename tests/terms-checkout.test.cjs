@@ -22,225 +22,268 @@ const root = path.join(__dirname, '..');
 const termsPath = path.join(root, 'src', 'pages', 'Terms.jsx');
 const checkoutPath = path.join(root, 'src', 'pages', 'Checkout.jsx');
 const apiPath = path.join(root, 'netlify', 'functions', 'api.cjs');
+const migrationPath = path.join(root, 'supabase', 'migrations', 'terms_acceptance.sql');
 
 const terms = fs.readFileSync(termsPath, 'utf8');
 const checkout = fs.readFileSync(checkoutPath, 'utf8');
 const api = fs.readFileSync(apiPath, 'utf8');
+const migration = fs.readFileSync(migrationPath, 'utf8');
 
 // ─── Terms.jsx: Prohibited wording ──────────────────────────────────
 console.log('\n=== Terms.jsx: Prohibited Wording ===\n');
 
 test('"Lifetime Deposit Credit" is NOT displayed in Terms.jsx', () => {
-  assert.ok(!terms.includes('Lifetime Deposit Credit'), 'Found "Lifetime Deposit Credit" — must use "Deposit Credit" only');
+  assert.ok(!terms.includes('Lifetime Deposit Credit'), 'Found "Lifetime Deposit Credit"');
 });
 
 test('"Lifetime Deposit Credit" is NOT in the checkout warning', () => {
   assert.ok(!checkout.includes('Lifetime Deposit Credit'), 'Checkout contains "Lifetime Deposit Credit"');
 });
 
-test('The unapproved 30-day condition is NOT customer-facing in Terms.jsx', () => {
+test('30-day condition is NOT customer-facing in Terms clause 7.1', () => {
   const lines = terms.split('\n');
-  const inClause71 = lines.findIndex(l => l.includes('7.1'));
-  const inClause72 = lines.findIndex(l => l.includes('7.2'));
-  const section7 = lines.slice(inClause71, inClause72 > 0 ? inClause72 : undefined).join('\n');
-  assert.ok(!section7.includes('more than 30 days'), '30-day condition appears in customer-facing clause 7.1');
+  const idx71 = lines.findIndex(l => l.includes('7.1'));
+  const idx72 = lines.findIndex((l, i) => i > idx71 && l.includes('7.2'));
+  const section71 = lines.slice(idx71, idx72 > 0 ? idx72 : idx71 + 10).join('\n');
+  assert.ok(!section71.includes('more than 30 days'), '30-day condition in clause 7.1');
 });
 
-test('The unapproved 30-day condition is NOT customer-facing in checkout warning', () => {
+test('30-day condition is NOT in checkout warning', () => {
   const warningMatch = checkout.match(/<Alert severity="warning"[\s\S]*?<\/Alert>/);
-  assert.ok(warningMatch, 'No warning alert found in checkout');
-  assert.ok(!warningMatch[0].includes('more than 30 days'), 'Checkout warning references 30-day condition');
+  assert.ok(warningMatch, 'No warning alert');
+  assert.ok(!warningMatch[0].includes('more than 30 days'), '30-day in checkout warning');
+});
+
+test('12-month expiry is NOT in checkout warning', () => {
+  const warningMatch = checkout.match(/<Alert severity="warning"[\s\S]*?<\/Alert>/);
+  assert.ok(warningMatch, 'No warning alert');
+  assert.ok(!warningMatch[0].includes('12-month'), '12-month expiry in checkout warning');
+});
+
+test('"provided the applicable grace-period conditions" is NOT in clause 7.1', () => {
+  assert.ok(!terms.includes('provided the applicable grace-period conditions'), 'Undefined grace-period conditions phrase found');
+});
+
+test('"Forfeited" is NOT used in referral column (use "Does not carry forward")', () => {
+  assert.ok(!terms.includes('>Forfeited<') && !terms.includes('"Forfeited"'), '"Forfeited" still used in Terms');
 });
 
 // ─── Terms.jsx: Required wording ────────────────────────────────────
 console.log('\n=== Terms.jsx: Required Wording ===\n');
 
-test('Terms uses "Deposit Credit" (not "Lifetime")', () => {
-  assert.ok(terms.includes('Deposit Credit'), 'Missing "Deposit Credit" in Terms');
+test('Terms uses "Deposit Credit"', () => {
+  assert.ok(terms.includes('Deposit Credit'), 'Missing "Deposit Credit"');
 });
 
-test('Terms includes cancellation-outcomes matrix (Table 1)', () => {
-  assert.ok(terms.includes('Cancellation Outcomes Summary') || terms.includes('cancellation-outcomes matrix'), 'Missing cancellation matrix');
-  assert.ok(terms.includes('Traveler cancels within 48h grace period'), 'Missing grace period scenario in matrix');
+test('Cancellation matrix is present', () => {
+  assert.ok(terms.includes('Cancellation Outcomes Summary'), 'Missing cancellation matrix');
+  assert.ok(terms.includes('Traveler cancels within 48h grace period'), 'Missing grace period row');
+});
+
+test('Force-majeure table has single row (reconciled with 7.7)', () => {
+  const forceMajeureRows = (terms.match(/Force majeure/g) || []).length;
+  assert.ok(forceMajeureRows <= 2, `Expected ≤2 "Force majeure" mentions (clause + table), found ${forceMajeureRows}`);
+});
+
+test('Referral column uses "Does not carry forward" consistently', () => {
+  const doesNotCarry = (terms.match(/Does not carry forward/g) || []).length;
+  assert.ok(doesNotCarry >= 3, `Expected ≥3 "Does not carry forward" in table, found ${doesNotCarry}`);
 });
 
 test('Terms references Consumer Rights Act 2015', () => {
-  assert.ok(terms.includes('Consumer Rights Act 2015'), 'Missing Consumer Rights Act reference');
+  assert.ok(terms.includes('Consumer Rights Act 2015'), 'Missing CRA 2015');
 });
 
 test('Terms references Package Travel Regulations 2018', () => {
-  assert.ok(terms.includes('Package Travel') && terms.includes('2018'), 'Missing PTR 2018 reference');
+  assert.ok(terms.includes('Package Travel') && terms.includes('2018'), 'Missing PTR 2018');
 });
 
-test('Insurance is described as "additional protection"', () => {
-  assert.ok(terms.includes('additional protection'), 'Insurance not described as additional protection');
+test('Insurance is "additional protection"', () => {
+  assert.ok(terms.includes('additional protection'), 'Missing additional protection');
 });
 
-test('Payment 1 monetary refund where law requires', () => {
-  assert.ok(terms.includes('monetary refund'), 'Missing monetary refund provision');
+test('Monetary refund provision exists', () => {
+  assert.ok(terms.includes('monetary refund'), 'Missing monetary refund');
 });
 
-test('Terms DRAFT banner is present', () => {
-  assert.ok(terms.includes('Draft') || terms.includes('DRAFT'), 'Missing draft banner');
-  assert.ok(terms.includes('pending legal review'), 'Missing legal review notice in draft banner');
-  assert.ok(!terms.includes('founder approval'), 'DRAFT banner contains internal founder-approval language');
+test('DRAFT banner: "pending legal review", no "founder"', () => {
+  assert.ok(terms.includes('pending legal review'), 'Missing legal review notice');
+  assert.ok(!terms.includes('founder approval'), 'Contains founder-approval language');
 });
 
 // ─── Terms.jsx: Version consistency ─────────────────────────────────
 console.log('\n=== Terms.jsx: Version Consistency ===\n');
 
-test('TERMS_VERSION is defined in Terms.jsx', () => {
-  assert.ok(terms.includes("TERMS_VERSION"), 'TERMS_VERSION constant not found');
+test('TERMS_VERSION is draft-0.3', () => {
+  assert.ok(terms.includes("'draft-0.3'") || terms.includes('"draft-0.3"'), 'TERMS_VERSION not draft-0.3');
 });
 
-test('TERMS_VERSION value is draft-0.3', () => {
-  assert.ok(terms.includes("'draft-0.3'") || terms.includes('"draft-0.3"'), 'TERMS_VERSION is not draft-0.3');
-});
+// ─── Checkout.jsx: Warning + acknowledgements ───────────────────────
+console.log('\n=== Checkout.jsx: Warning + Acknowledgements ===\n');
 
-test('Acceptance record schema in checkout and API includes version and timestamp', () => {
-  // Checkout sends termsVersion, disclosureVersion, acceptedAt
-  assert.ok(checkout.includes('termsVersion:'), 'Checkout missing termsVersion');
-  assert.ok(checkout.includes('disclosureVersion:'), 'Checkout missing disclosureVersion');
-  assert.ok(checkout.includes('acceptedAt:'), 'Checkout missing acceptedAt');
-  // API stores terms_version, disclosure_version, server_accepted_at, client_accepted_at
-  assert.ok(api.includes('terms_version:'), 'API missing terms_version column insert');
-  assert.ok(api.includes('disclosure_version:'), 'API missing disclosure_version column insert');
-  assert.ok(api.includes('client_accepted_at:'), 'API missing client_accepted_at insert');
-});
-
-// ─── Checkout.jsx: Warning alert wording ────────────────────────────
-console.log('\n=== Checkout.jsx: Warning Alert Wording ===\n');
-
-test('Checkout warning uses "Deposit Credit" (not "Lifetime")', () => {
-  const warningMatch = checkout.match(/<Alert severity="warning"[\s\S]*?<\/Alert>/);
-  assert.ok(warningMatch, 'No warning alert found');
-  assert.ok(warningMatch[0].includes('Deposit Credit'), 'Warning does not use "Deposit Credit"');
-  assert.ok(!warningMatch[0].includes('Lifetime'), 'Warning still contains "Lifetime"');
+test('Checkout warning uses "Deposit Credit", no "Lifetime"', () => {
+  const w = checkout.match(/<Alert severity="warning"[\s\S]*?<\/Alert>/);
+  assert.ok(w, 'No warning alert');
+  assert.ok(w[0].includes('Deposit Credit'), 'Missing Deposit Credit');
+  assert.ok(!w[0].includes('Lifetime'), 'Contains Lifetime');
 });
 
 test('Checkout warning references 48-hour grace period', () => {
-  const warningMatch = checkout.match(/<Alert severity="warning"[\s\S]*?<\/Alert>/);
-  assert.ok(warningMatch, 'No warning alert found');
-  assert.ok(warningMatch[0].includes('48'), 'Warning does not reference 48-hour grace period');
+  const w = checkout.match(/<Alert severity="warning"[\s\S]*?<\/Alert>/);
+  assert.ok(w && w[0].includes('48'), 'Missing 48-hour reference');
 });
 
-// ─── Checkout.jsx: Required acknowledgements ────────────────────────
-console.log('\n=== Checkout.jsx: Required Acknowledgements ===\n');
-
-test('Checkout requires both confirmed and insuranceConfirmed to enable Pay button', () => {
-  assert.ok(checkout.includes('!confirmed || !insuranceConfirmed'), 'Pay button does not require both checkboxes');
+test('Checkout uses MUI Checkbox (accessible)', () => {
+  assert.ok(checkout.includes('Checkbox'), 'Missing MUI Checkbox component');
+  assert.ok(checkout.includes('FormControlLabel'), 'Missing FormControlLabel');
+  assert.ok(checkout.includes('inputProps={{ \'aria-label\''), 'Missing aria-label on checkboxes');
 });
 
-test('Checkout acknowledgement references Terms sections 6 and 7', () => {
-  assert.ok(checkout.includes('sections 6 and 7') || checkout.includes('section 6') && checkout.includes('section 7'), 'Acknowledgement does not reference sections 6 and 7');
+test('Pay button requires both checkboxes', () => {
+  assert.ok(checkout.includes('!confirmed || !insuranceConfirmed'), 'Pay button missing checkbox guard');
 });
 
-// ─── Checkout.jsx: termsAccepted object ─────────────────────────────
-console.log('\n=== Checkout.jsx: termsAccepted Persistence ===\n');
-
-test('Checkout sends termsAccepted to create-checkout endpoint', () => {
-  assert.ok(checkout.includes('termsAccepted:'), 'termsAccepted not sent in create-checkout request body');
+test('Acknowledgement references sections 6 and 7', () => {
+  assert.ok(checkout.includes('sections 6 and 7'), 'Missing sections 6 and 7 reference');
 });
 
-test('termsAccepted includes termsVersion', () => {
-  assert.ok(checkout.includes('termsVersion:'), 'termsAccepted missing termsVersion');
+// ─── Checkout.jsx: termsAccepted — client sends only checkbox states ─
+console.log('\n=== Checkout.jsx: termsAccepted (Client-side) ===\n');
+
+test('Checkout sends termsAccepted to create-checkout', () => {
+  assert.ok(checkout.includes('termsAccepted:'), 'termsAccepted not sent');
 });
 
-test('termsAccepted includes disclosureVersion', () => {
-  assert.ok(checkout.includes('disclosureVersion:'), 'termsAccepted missing disclosureVersion');
+test('Client termsAccepted contains confirmed and insuranceConfirmed', () => {
+  const match = checkout.match(/termsAccepted:\s*\{([^}]+)\}/);
+  assert.ok(match, 'Could not extract termsAccepted from checkout');
+  assert.ok(match[1].includes('confirmed'), 'Missing confirmed');
+  assert.ok(match[1].includes('insuranceConfirmed'), 'Missing insuranceConfirmed');
 });
 
-test('termsAccepted includes acceptedAt', () => {
-  assert.ok(checkout.includes('acceptedAt:'), 'termsAccepted missing acceptedAt timestamp');
+test('Client does NOT send termsVersion/server-generated fields', () => {
+  const match = checkout.match(/termsAccepted:\s*\{([^}]+)\}/);
+  assert.ok(match, 'Could not extract termsAccepted');
+  assert.ok(!match[1].includes('termsVersion'), 'Client should not send termsVersion');
+  assert.ok(!match[1].includes('bookingRef'), 'Client should not send bookingRef');
+  assert.ok(!match[1].includes('acceptedAt'), 'Client should not send acceptedAt');
 });
 
-test('termsAccepted includes bookingRef', () => {
-  assert.ok(checkout.includes('bookingRef:'), 'termsAccepted missing bookingRef');
+// ─── API: Server-side enforcement ───────────────────────────────────
+console.log('\n=== API: Server-side Enforcement ===\n');
+
+test('Server requires terms acknowledgement (confirmed + insuranceConfirmed)', () => {
+  assert.ok(api.includes("termsAccepted.confirmed"), 'Missing confirmed check');
+  assert.ok(api.includes("termsAccepted.insuranceConfirmed"), 'Missing insuranceConfirmed check');
 });
 
-test('termsAccepted includes departureDate', () => {
-  assert.ok(checkout.includes('departureDate:'), 'termsAccepted missing departureDate');
+test('Server returns 400 if terms not accepted', () => {
+  assert.ok(api.includes('400') && api.includes('Terms acknowledgement'), 'Missing 400 for unaccepted terms');
 });
 
-test('termsAccepted includes depositAmount and currency', () => {
-  assert.ok(checkout.includes('depositAmount:'), 'termsAccepted missing depositAmount');
-  assert.ok(checkout.includes('currency,'), 'termsAccepted missing currency');
+test('Server generates authoritative bookingRef', () => {
+  assert.ok(api.includes('serverBookingRef'), 'Missing server-generated bookingRef');
+  assert.ok(api.includes("'bls_'"), 'Booking ref prefix not server-generated');
 });
 
-test('termsAccepted includes confirmed and insuranceConfirmed checkboxes', () => {
-  assert.ok(checkout.includes('confirmed,'), 'termsAccepted missing confirmed checkbox state');
-  assert.ok(checkout.includes('insuranceConfirmed,'), 'termsAccepted missing insuranceConfirmed checkbox state');
+test('Server generates authoritative termsVersion and disclosureVersion', () => {
+  assert.ok(api.includes('CURRENT_TERMS_VERSION'), 'Missing server-side termsVersion');
+  assert.ok(api.includes('CURRENT_DISCLOSURE_VERSION'), 'Missing server-side disclosureVersion');
 });
 
-test('termsAccepted versions match TERMS_VERSION (draft-0.3)', () => {
-  const match = checkout.match(/termsVersion:\s*['"]([^'"]+)['"]/);
-  assert.ok(match, 'Could not extract termsVersion from checkout');
-  assert.strictEqual(match[1], 'draft-0.3', `termsVersion is "${match[1]}" not "draft-0.3"`);
+test('Server generates serverAcceptedAt timestamp', () => {
+  assert.ok(api.includes('serverAcceptedAt'), 'Missing serverAcceptedAt');
+  assert.ok(api.includes("new Date().toISOString()"), 'serverAcceptedAt not server-generated');
 });
 
-// ─── API: terms acceptance server-side persistence ──────────────────
-console.log('\n=== API: Terms Acceptance Persistence ===\n');
-
-test('create-checkout accepts termsAccepted from request body', () => {
-  assert.ok(api.includes("termsAccepted") && api.includes("reqBody(event)"), 'handleStripe does not extract termsAccepted from request body');
+test('Server uses pricing engine currency for Stripe session (not client currency)', () => {
+  assert.ok(api.includes('currency: pricing.currency'), 'Stripe session not using pricing.currency');
 });
 
-test('Stripe session metadata includes termsAccepted', () => {
-  assert.ok(api.includes("termsAccepted: JSON.stringify(termsAccepted"), 'termsAccepted not stored in Stripe session metadata');
+test('Server stores authoritative values in Stripe metadata', () => {
+  assert.ok(api.includes('bookingRef: serverBookingRef'), 'bookingRef not in metadata');
+  assert.ok(api.includes('termsVersion: CURRENT_TERMS_VERSION'), 'termsVersion not in metadata');
+  assert.ok(api.includes('disclosureVersion: CURRENT_DISCLOSURE_VERSION'), 'disclosureVersion not in metadata');
+  assert.ok(api.includes('serverAcceptedAt,'), 'serverAcceptedAt not in metadata');
 });
 
-test('confirm-payment persists to terms_acceptance table', () => {
-  assert.ok(api.includes("terms_acceptance") && api.includes(".insert("), 'confirm-payment does not insert into terms_acceptance');
+// ─── API: Webhook persistence ───────────────────────────────────────
+console.log('\n=== API: Webhook Persistence ===\n');
+
+test('confirm-payment reads termsVersion from Stripe metadata', () => {
+  assert.ok(api.includes('meta.termsVersion'), 'Not reading termsVersion from metadata');
 });
 
-test('Server uses server-generated timestamp (server_accepted_at)', () => {
-  assert.ok(api.includes('server_accepted_at') || api.includes('DEFAULT NOW()') || api.includes('server timestamp'), 'terms_acceptance does not use server-generated timestamp');
+test('confirm-payment reads bookingRef from Stripe metadata', () => {
+  assert.ok(api.includes('meta.bookingRef'), 'Not reading bookingRef from metadata');
 });
 
-test('confirm-payment reads termsAccepted from Stripe metadata', () => {
-  assert.ok(api.includes('meta.termsAccepted') || api.includes("termsAccepted"), 'confirm-payment does not read termsAccepted from metadata');
+test('confirm-payment inserts into terms_acceptance', () => {
+  assert.ok(api.includes("terms_acceptance") && api.includes(".insert("), 'Missing terms_acceptance insert');
 });
 
-test('confirm-payment stores confirmed and insuranceConfirmed checkbox states', () => {
-  assert.ok(api.includes('confirmed_checkbox'), 'confirm-payment does not store confirmed checkbox state');
-  assert.ok(api.includes('insurance_confirmed_checkbox'), 'confirm-payment does not store insurance confirmed checkbox state');
+test('confirm-payment reports persisted: false on insert error', () => {
+  assert.ok(api.includes("persisted: false"), 'Missing persisted: false on error');
+});
+
+test('confirm-payment is idempotent (skips duplicate session_id)', () => {
+  assert.ok(api.includes('already exists') || api.includes('idempotent') || api.includes('maybeSingle'), 'Missing idempotency check');
+});
+
+test('confirm-payment stores confirmed_checkbox: true and insurance_confirmed_checkbox: true', () => {
+  assert.ok(api.includes('confirmed_checkbox: true'), 'Missing confirmed_checkbox: true');
+  assert.ok(api.includes('insurance_confirmed_checkbox: true'), 'Missing insurance_confirmed_checkbox: true');
 });
 
 // ─── Migration: terms_acceptance table ──────────────────────────────
 console.log('\n=== Migration: terms_acceptance Table ===\n');
 
-const migrationPath = path.join(root, 'supabase', 'migrations', 'terms_acceptance.sql');
-const migration = fs.readFileSync(migrationPath, 'utf8');
-
-test('terms_acceptance table has session_id column', () => {
-  assert.ok(migration.includes('session_id'), 'Missing session_id column');
+test('session_id has UNIQUE constraint', () => {
+  assert.ok(migration.includes('session_id') && migration.includes('UNIQUE'), 'Missing UNIQUE on session_id');
 });
 
-test('terms_acceptance has terms_version and disclosure_version columns', () => {
-  assert.ok(migration.includes('terms_version'), 'Missing terms_version column');
-  assert.ok(migration.includes('disclosure_version'), 'Missing disclosure_version column');
+test('departure_date is DATE type', () => {
+  assert.ok(migration.includes('departure_date DATE'), 'departure_date not DATE type');
 });
 
-test('terms_acceptance has server_accepted_at with DEFAULT NOW()', () => {
-  assert.ok(migration.includes('server_accepted_at'), 'Missing server_accepted_at column');
-  assert.ok(migration.includes('NOW()'), 'server_accepted_at does not default to NOW()');
+test('client_accepted_at is TIMESTAMPTZ type', () => {
+  assert.ok(migration.includes('client_accepted_at TIMESTAMPTZ'), 'client_accepted_at not TIMESTAMPTZ');
 });
 
-test('terms_acceptance has confirmed_checkbox and insurance_confirmed_checkbox', () => {
-  assert.ok(migration.includes('confirmed_checkbox'), 'Missing confirmed_checkbox column');
-  assert.ok(migration.includes('insurance_confirmed_checkbox'), 'Missing insurance_confirmed_checkbox column');
+test('confirmed_checkbox CHECK constraint requires true', () => {
+  assert.ok(migration.includes('CHECK (confirmed_checkbox = true)'), 'Missing CHECK on confirmed_checkbox');
 });
 
-test('terms_acceptance has RLS enabled', () => {
+test('insurance_confirmed_checkbox CHECK constraint requires true', () => {
+  assert.ok(migration.includes('CHECK (insurance_confirmed_checkbox = true)'), 'Missing CHECK on insurance_confirmed_checkbox');
+});
+
+test('currency CHECK constraint restricts to gbp/eur/usd', () => {
+  assert.ok(migration.includes("CHECK (currency IN ('gbp', 'eur', 'usd'))"), 'Missing CHECK on currency');
+});
+
+test('UPDATE and DELETE privileges revoked from all roles', () => {
+  assert.ok(migration.includes('REVOKE UPDATE, DELETE'), 'Missing REVOKE');
+});
+
+test('Trigger rejects UPDATE operations', () => {
+  assert.ok(migration.includes('BEFORE UPDATE') && migration.includes('TRIGGER'), 'Missing UPDATE trigger');
+});
+
+test('Trigger rejects DELETE operations', () => {
+  assert.ok(migration.includes('BEFORE DELETE') && migration.includes('TRIGGER'), 'Missing DELETE trigger');
+});
+
+test('Only INSERT and SELECT granted to service_role', () => {
+  assert.ok(migration.includes('GRANT INSERT, SELECT'), 'Missing GRANT');
+});
+
+test('Migration is atomic (wrapped in BEGIN/COMMIT)', () => {
+  assert.ok(migration.includes('BEGIN;') && migration.includes('COMMIT;'), 'Not wrapped in BEGIN/COMMIT');
+});
+
+test('RLS enabled', () => {
   assert.ok(migration.includes('ENABLE ROW LEVEL SECURITY'), 'RLS not enabled');
-});
-
-test('terms_acceptance prevents UPDATE (append-only)', () => {
-  assert.ok(migration.includes('FOR UPDATE') && migration.includes('USING (false)'), 'UPDATE not blocked');
-});
-
-test('terms_acceptance prevents DELETE (append-only)', () => {
-  assert.ok(migration.includes('FOR DELETE') && migration.includes('USING (false)'), 'DELETE not blocked');
 });
 
 // ─── Summary ────────────────────────────────────────────────────────

@@ -244,6 +244,14 @@ async function handleStripe(event) {
     const { routeName, guideName, guideId, price, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining, termsAccepted } = reqBody(event);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
 
+    // ─── Server-side Terms Enforcement ──────────────────────────────
+    const CURRENT_TERMS_VERSION = 'draft-0.3';
+    const CURRENT_DISCLOSURE_VERSION = 'draft-0.3';
+
+    if (!termsAccepted || !termsAccepted.confirmed || !termsAccepted.insuranceConfirmed) {
+      return json({ error: 'Terms acknowledgement and insurance confirmation are required before booking.' }, 400);
+    }
+
     // Use unified pricing engine
     const pricing = await calculateBookingPrice({
       tripPrice: price,
@@ -267,13 +275,17 @@ async function handleStripe(event) {
       }
     }
 
+    // Server-generated authoritative values (never trust client)
+    const serverBookingRef = 'bls_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const serverAcceptedAt = new Date().toISOString();
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
       customer_email: guestEmail,
       line_items: [{
         price_data: {
-          currency: currency || 'usd',
+          currency: pricing.currency,
           product_data: {
             name: `${routeName} with ${guideName}`,
             description: `${travelers} traveler(s) · ${date} · 20% deposit`,
@@ -292,13 +304,16 @@ async function handleStripe(event) {
         grossPlatformFee: String(pricing.grossPlatformFee),
         platformFeePct: String(pricing.platformFeePercentage / 100),
         calculationVersion: pricing.calculationVersion,
-        termsAccepted: JSON.stringify(termsAccepted || {}),
+        bookingRef: serverBookingRef,
+        serverAcceptedAt,
+        termsVersion: CURRENT_TERMS_VERSION,
+        disclosureVersion: CURRENT_DISCLOSURE_VERSION,
       },
       success_url: `${origin}/checkout/${guideId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout/${guideId}?payment=cancel`,
     });
 
-    return json({ url: session.url, depositAmount: finalDeposit, discountAmount: appliedReferral?.discountAmount || 0, calculationVersion: pricing.calculationVersion });
+    return json({ url: session.url, depositAmount: finalDeposit, discountAmount: appliedReferral?.discountAmount || 0, calculationVersion: pricing.calculationVersion, bookingRef: serverBookingRef });
   } catch (err) {
     return json({ error: err.message }, 500);
   }
@@ -447,30 +462,46 @@ async function handleConfirmPayment(event) {
 
     // ─── Persist Terms Acceptance Record (append-only, server timestamp) ──
     try {
-      let termsData = {};
-      try { termsData = JSON.parse(meta.termsAccepted || '{}'); } catch {}
-      if (termsData.termsVersion) {
-        const { error: termsErr } = await sr.from('terms_acceptance').insert({
-          session_id: sessionId,
-          guest_email: meta.guestEmail || null,
-          guest_name: meta.guestName || null,
-          guide_id: meta.guideId || null,
-          route_name: meta.routeName || null,
-          booking_ref: termsData.bookingRef || null,
-          departure_date: termsData.departureDate || meta.date || null,
-          deposit_amount: parseFloat(meta.presentmentAmount || '0'),
-          currency: (meta.presentmentCurrency || 'usd').toLowerCase(),
-          confirmed_checkbox: !!termsData.confirmed,
-          insurance_confirmed_checkbox: !!termsData.insuranceConfirmed,
-          terms_version: termsData.termsVersion,
-          disclosure_version: termsData.disclosureVersion || termsData.termsVersion,
-          client_accepted_at: termsData.acceptedAt || null,
-        });
-        if (termsErr) console.error('Failed to persist terms acceptance:', termsErr.message);
-        results.termsAccepted = { persisted: true, termsVersion: termsData.termsVersion };
+      const termsVersion = meta.termsVersion;
+      const disclosureVersion = meta.disclosureVersion;
+      const bookingRef = meta.bookingRef;
+      const serverAcceptedAt = meta.serverAcceptedAt;
+
+      if (termsVersion && bookingRef) {
+        // Idempotency: skip if this session already has a terms_acceptance record
+        const { data: existing } = await sr.from('terms_acceptance')
+          .select('id').eq('session_id', sessionId).maybeSingle();
+
+        if (!existing) {
+          const { error: termsErr } = await sr.from('terms_acceptance').insert({
+            session_id: sessionId,
+            guest_email: meta.guestEmail || null,
+            guest_name: meta.guestName || null,
+            guide_id: meta.guideId || null,
+            route_name: meta.routeName || null,
+            booking_ref: bookingRef,
+            departure_date: meta.date || null,
+            deposit_amount: parseFloat(meta.presentmentAmount || '0'),
+            currency: (meta.presentmentCurrency || 'usd').toLowerCase(),
+            confirmed_checkbox: true,
+            insurance_confirmed_checkbox: true,
+            terms_version: termsVersion,
+            disclosure_version: disclosureVersion || termsVersion,
+            client_accepted_at: serverAcceptedAt || new Date().toISOString(),
+          });
+          if (termsErr) {
+            console.error('Failed to persist terms acceptance:', termsErr.message);
+            results.termsAccepted = { persisted: false, error: termsErr.message };
+          } else {
+            results.termsAccepted = { persisted: true, termsVersion };
+          }
+        } else {
+          results.termsAccepted = { persisted: true, termsVersion, note: 'already exists (idempotent)' };
+        }
       }
     } catch (termsEx) {
       console.error('terms_acceptance insert error:', termsEx.message);
+      results.termsAccepted = { persisted: false, error: termsEx.message };
     }
 
     // ─── Traveller Referral Points ───────────────────────────────────

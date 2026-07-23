@@ -1,4 +1,4 @@
-import { Container, Typography, Paper, Alert } from '@mui/material';
+import { Container, Typography, Paper, Alert, Box } from '@mui/material';
 import SEO from '../components/SEO';
 
 const TERMS_VERSION = 'draft-0.3';
@@ -49,7 +49,7 @@ export default function Terms() {
 
         <h2>7. Cancellations, Refunds &amp; Grace Period</h2>
 
-        <p><strong>7.1 48-Hour Voluntary Grace Period.</strong> A Traveler may cancel a booking within 48 hours of the initial Booking Lock Payment and receive a full monetary refund of the Booking Lock Payment to the original payment method, provided the applicable grace-period conditions are met. Cancellation requests must be submitted through the Platform or by contacting hello@bucketlistspots.com. After the 48-hour grace period, the Booking Lock Payment is converted into a Deposit Credit (see clause 7.5).</p>
+        <p><strong>7.1 48-Hour Voluntary Grace Period.</strong> A Traveler may cancel a booking within 48 hours of the initial Booking Lock Payment and receive a full monetary refund of the Booking Lock Payment to the original payment method. Cancellation requests must be submitted through the Platform or by contacting hello@bucketlistspots.com. After the 48-hour grace period, the Booking Lock Payment is converted into a Deposit Credit (see clause 7.5).</p>
 
         <p><strong>7.2 Traveler Cancellation (After Grace Period).</strong> If a Traveler cancels after the 48-hour grace period:</p>
         <p>(a) <strong>Payment 1 (Booking Lock Payment):</strong> is converted into a Deposit Credit for the Traveler (see clause 7.5);</p>
@@ -95,6 +95,7 @@ export default function Terms() {
         <p>(c) nothing in this clause limits the Traveler's statutory rights under the Package Travel and Linked Travel Arrangements Regulations 2018, which may provide additional protections where BucketListSpots is classified as an organizer.</p>
 
         <p><strong>7.9 Cancellation Outcomes Summary.</strong></p>
+        <Box component="div" role="region" aria-label="Cancellation outcomes summary" tabIndex={0} sx={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', mb: 2, border: '1px solid rgba(16,42,67,0.08)', borderRadius: 1, '& table': { minWidth: 700 } }}>
         <table>
           <thead>
             <tr>
@@ -114,7 +115,7 @@ export default function Terms() {
               <td>N/A or refunded if paid</td>
               <td>Not affected</td>
               <td>N/A</td>
-              <td>Forfeited</td>
+              <td>Does not carry forward</td>
               <td>14 business days</td>
             </tr>
             <tr>
@@ -141,7 +142,7 @@ export default function Terms() {
               <td>Refunded in full</td>
               <td>Not affected</td>
               <td>N/A</td>
-              <td>Forfeited</td>
+              <td>Does not carry forward</td>
               <td>14 business days</td>
             </tr>
             <tr>
@@ -150,24 +151,15 @@ export default function Terms() {
               <td>Refunded in full</td>
               <td>Not affected</td>
               <td>N/A</td>
-              <td>Forfeited</td>
+              <td>Does not carry forward</td>
               <td>14 business days</td>
             </tr>
             <tr>
-              <td>Force majeure (before departure)</td>
+              <td>Force majeure</td>
               <td>Converted to Deposit Credit *</td>
-              <td>Refunded in full</td>
+              <td>Refunded in full if paid</td>
               <td>Not affected</td>
               <td>Issued (or existing credit retained)</td>
-              <td>Does not carry forward</td>
-              <td>14 business days (Payment 2)</td>
-            </tr>
-            <tr>
-              <td>Force majeure (after departure)</td>
-              <td>Converted to Deposit Credit *</td>
-              <td>Refunded if not yet released</td>
-              <td>Guide retains if trip commenced</td>
-              <td>Issued</td>
               <td>Does not carry forward</td>
               <td>14 business days</td>
             </tr>
@@ -177,7 +169,7 @@ export default function Terms() {
               <td>Subject to insolvency proceedings</td>
               <td>Not affected</td>
               <td>May not be honoured</td>
-              <td>Forfeited</td>
+              <td>Does not carry forward</td>
               <td>Per administrator/liquidator</td>
             </tr>
             <tr>
@@ -186,11 +178,12 @@ export default function Terms() {
               <td>Refunded if held by BLS</td>
               <td>Guide's obligation ceases</td>
               <td>N/A</td>
-              <td>Forfeited</td>
+              <td>Does not carry forward</td>
               <td>14 business days</td>
             </tr>
           </tbody>
         </table>
+        </Box>
         <p style={{ fontSize: 11, fontStyle: 'italic' }}>* Where applicable law requires a monetary refund rather than a credit, the Traveler receives a monetary refund of Payment 1 instead of Deposit Credit.</p>
 
         <h2>8. Travel Insurance — Additional Protection</h2>
