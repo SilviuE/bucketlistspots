@@ -174,12 +174,12 @@ export default function Terms() {
             </tr>
             <tr>
               <td>Insolvency (Guide)</td>
-              <td>Full monetary refund (from BLS)</td>
-              <td>Refunded if held by BLS</td>
+              <td>Subject to insolvency proceedings</td>
+              <td>Refund if held by BLS, subject to insolvency law</td>
               <td>Guide's obligation ceases</td>
               <td>N/A</td>
               <td>Does not carry forward</td>
-              <td>14 business days</td>
+              <td>Per administrator/liquidator</td>
             </tr>
           </tbody>
         </table>

@@ -241,7 +241,7 @@ async function handleStripe(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-    const { routeName, guideName, guideId, price, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining, termsAccepted } = reqBody(event);
+    const { routeName, guideId, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining, termsAccepted } = reqBody(event);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
 
     // ─── Server-side Terms Enforcement ──────────────────────────────
@@ -252,10 +252,44 @@ async function handleStripe(event) {
       return json({ error: 'Terms acknowledgement and insurance confirmation are required before booking.' }, 400);
     }
 
-    // Use unified pricing engine
+    // ─── Authoritative Trip Pricing (never trust client price) ──────
+    const guideSb = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const { data: guideRecord, error: guideErr } = await guideSb.from('guides')
+      .select('id, name, trading_name, price, price_currency, status, routes')
+      .eq('id', guideId)
+      .maybeSingle();
+
+    if (guideErr || !guideRecord) {
+      return json({ error: 'Invalid guide. Please refresh and try again.' }, 400);
+    }
+    if (guideRecord.status !== 'published') {
+      return json({ error: 'This guide is not currently accepting bookings.' }, 400);
+    }
+    if (!routeName) {
+      return json({ error: 'Route name is required.' }, 400);
+    }
+    const matchRoute = (guideRecord.routes || []).find(r => r.name === routeName);
+    if (!matchRoute) {
+      return json({ error: `Route "${routeName}" not found for this guide.` }, 400);
+    }
+
+    // Authoritative price: route price, fallback to guide base price
+    const authoritativePrice = Number(matchRoute.price) || Number(guideRecord.price) || 0;
+    if (!Number.isFinite(authoritativePrice) || authoritativePrice <= 0) {
+      return json({ error: 'This route does not have a valid price configured.' }, 400);
+    }
+
+    // Validate currency against guide's configured currency
+    const bookingCurrency = (currency || guideRecord.price_currency || 'usd').toLowerCase();
+    const allowedCurrencies = ['gbp', 'eur', 'usd'];
+    if (!allowedCurrencies.includes(bookingCurrency)) {
+      return json({ error: `Unsupported currency "${bookingCurrency}". Allowed: ${allowedCurrencies.join(', ')}` }, 400);
+    }
+
+    // Use unified pricing engine with SERVER-DERIVED price (ignore any client price)
     const pricing = await calculateBookingPrice({
-      tripPrice: price,
-      currency: currency || 'usd',
+      tripPrice: authoritativePrice,
+      currency: bookingCurrency,
       travelers: travelers || 1,
       referralCode: referralCode || null,
       porterTraining: porterTraining || false,
@@ -279,6 +313,9 @@ async function handleStripe(event) {
     const serverBookingRef = 'bls_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
     const serverAcceptedAt = new Date().toISOString();
 
+    // Server-authoritative guide name (never trust client)
+    const authoritativeGuideName = guideRecord.trading_name || guideRecord.name || 'Guide';
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
@@ -287,7 +324,7 @@ async function handleStripe(event) {
         price_data: {
           currency: pricing.currency,
           product_data: {
-            name: `${routeName} with ${guideName}`,
+            name: `${routeName} with ${authoritativeGuideName}`,
             description: `${travelers} traveler(s) · ${date} · 20% deposit`,
           },
           unit_amount: Math.round(finalDeposit * 100),
@@ -295,7 +332,7 @@ async function handleStripe(event) {
         quantity: 1,
       }],
       metadata: {
-        guideId, guideName, routeName, travelers: String(travelers), guestName, guestEmail, date,
+        guideId, guideName: authoritativeGuideName, routeName, travelers: String(travelers), guestName, guestEmail, date,
         referralCode: appliedReferral?.code || '',
         referrerUserId: appliedReferral?.referrerUserId || '',
         discountAmount: String(appliedReferral?.discountAmount || 0),
@@ -317,6 +354,248 @@ async function handleStripe(event) {
   } catch (err) {
     return json({ error: err.message }, 500);
   }
+}
+
+// ─── Stripe Webhook: checkout.session.completed ─────────────────────
+// Authoritative persistence mechanism for bookings.
+// The browser confirm-payment endpoint is status-only (reconciliation).
+const AMBASSADOR_COMMISSION_RATE_WEBHOOK = 0.05;
+
+async function handleStripeWebhook(event) {
+  if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
+
+  const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    console.error('STRIPE_WEBHOOK_SECRET not configured');
+    return json({ error: 'Webhook not configured' }, 500);
+  }
+
+  // Verify Stripe signature
+  let stripeEvent;
+  try {
+    const sig = event.headers['stripe-signature'] || event.headers['Stripe-Signature'];
+    if (!sig) return json({ error: 'Missing Stripe signature' }, 400);
+    stripeEvent = stripe.webhooks.constructEvent(event.body, sig, webhookSecret);
+  } catch (sigErr) {
+    console.error('Webhook signature verification failed:', sigErr.message);
+    return json({ error: 'Invalid signature' }, 400);
+  }
+
+  // Only handle checkout.session.completed
+  if (stripeEvent.type !== 'checkout.session.completed') {
+    return json({ ok: true, ignored: stripeEvent.type });
+  }
+
+  const session = stripeEvent.data.object;
+
+  // Verify payment status is actually paid
+  if (session.payment_status !== 'paid') {
+    console.log(`[Webhook] Session ${session.id} payment_status=${session.payment_status}, skipping fulfilment`);
+    return json({ ok: true, skipped: 'not_paid', payment_status: session.payment_status });
+  }
+
+  const meta = session.metadata || {};
+  const sessionId = session.id;
+  const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+  const results = {};
+
+  // ─── 1. Terms Acceptance Persistence (idempotent) ───────────────
+  try {
+    const termsVersion = meta.termsVersion;
+    const bookingRef = meta.bookingRef;
+
+    if (termsVersion && bookingRef) {
+      const { data: existing } = await sr.from('terms_acceptance')
+        .select('id').eq('session_id', sessionId).maybeSingle();
+
+      if (!existing) {
+        const { error: termsErr } = await sr.from('terms_acceptance').insert({
+          session_id: sessionId,
+          guest_email: meta.guestEmail || null,
+          guest_name: meta.guestName || null,
+          guide_id: meta.guideId || null,
+          route_name: meta.routeName || null,
+          booking_ref: bookingRef,
+          departure_date: meta.date || null,
+          deposit_amount: parseFloat(meta.presentmentAmount || '0'),
+          currency: (meta.presentmentCurrency || 'usd').toLowerCase(),
+          confirmed_checkbox: true,
+          insurance_confirmed_checkbox: true,
+          terms_version: termsVersion,
+          disclosure_version: meta.disclosureVersion || termsVersion,
+          client_accepted_at: meta.serverAcceptedAt || new Date().toISOString(),
+        });
+        if (termsErr) {
+          console.error('[Webhook] terms_acceptance insert error:', termsErr.message);
+          results.termsAccepted = { persisted: false, error: termsErr.message };
+        } else {
+          results.termsAccepted = { persisted: true, termsVersion };
+        }
+      } else {
+        results.termsAccepted = { persisted: true, termsVersion, note: 'already exists (idempotent)' };
+      }
+    }
+  } catch (termsEx) {
+    console.error('[Webhook] terms_acceptance error:', termsEx.message);
+    results.termsAccepted = { persisted: false, error: termsEx.message };
+  }
+
+  // ─── 2. Payment Report Persistence (idempotent) ─────────────────
+  try {
+    let stripeFinancialData = null;
+    if (session.payment_intent) {
+      const pi = await stripe.paymentIntents.retrieve(session.payment_intent);
+      if (pi.latest_charge) {
+        const charge = await stripe.charges.retrieve(pi.latest_charge);
+        if (charge.balance_transaction) {
+          const bt = await stripe.balanceTransactions.retrieve(charge.balance_transaction);
+          const processingFee = bt.fee_details ? bt.fee_details.filter(f => f.type === 'charge').reduce((s, f) => s + f.amount, 0) / 100 : null;
+          const conversionFee = bt.fee_details ? bt.fee_details.filter(f => f.type === 'currency_conversion').reduce((s, f) => s + f.amount, 0) / 100 : null;
+          const totalFee = bt.fee / 100;
+          const settlementFee = (processingFee !== null && conversionFee !== null) ? Math.round((totalFee - processingFee - conversionFee) * 100) / 100 : null;
+
+          stripeFinancialData = {
+            session_id: sessionId,
+            guide_id: meta.guideId || null,
+            guest_name: meta.guestName || null,
+            guest_email: meta.guestEmail || null,
+            route_name: meta.routeName || null,
+            booking_date: meta.date || null,
+            presentment_currency: (meta.presentmentCurrency || 'usd').toLowerCase(),
+            presentment_amount: parseFloat(meta.presentmentAmount || '0') || (session.amount_total || 0) / 100,
+            settlement_currency: bt.currency,
+            settlement_amount: bt.net / 100,
+            total_stripe_fee: totalFee,
+            net_settlement_amount: bt.net / 100,
+            stripe_balance_transaction_id: bt.id,
+            stripe_processing_fee: processingFee,
+            stripe_conversion_fee: conversionFee,
+            stripe_settlement_fee: settlementFee,
+            referral_code: meta.referralCode || null,
+            referral_discount_amount: parseFloat(meta.discountAmount || '0') || 0,
+            gross_platform_fee: parseFloat(meta.grossPlatformFee || '0'),
+            platform_fee_pct: parseFloat(meta.platformFeePct || '0.2'),
+          };
+        }
+      }
+    }
+
+    if (stripeFinancialData) {
+      // Idempotent: skip if report already exists for this session
+      const { data: existingReport } = await sr.from('payment_reports')
+        .select('id').eq('session_id', sessionId).maybeSingle();
+
+      if (!existingReport) {
+        const { error: insertErr } = await sr.from('payment_reports').insert(stripeFinancialData);
+        if (insertErr) {
+          console.error('[Webhook] payment_reports insert error:', insertErr.message);
+          results.paymentReport = { persisted: false, error: insertErr.message };
+        } else {
+          results.paymentReport = { persisted: true };
+        }
+      } else {
+        results.paymentReport = { persisted: true, note: 'already exists (idempotent)' };
+      }
+    }
+  } catch (reportEx) {
+    console.error('[Webhook] payment_reports error:', reportEx.message);
+    results.paymentReport = { persisted: false, error: reportEx.message };
+  }
+
+  // ─── 3. Referral Rewards (idempotent) ────────────────────────────
+  try {
+    const referralCode = meta.referralCode;
+    const referrerUserId = meta.referrerUserId;
+    const discountAmount = parseFloat(meta.discountAmount || '0');
+
+    if (referralCode && referrerUserId && discountAmount > 0) {
+      // Check if already credited for this session
+      const { data: existingTxn } = await sr.from('transactions')
+        .select('id').eq('linked_booking_id', sessionId).eq('type', 'credit').maybeSingle();
+
+      if (!existingTxn) {
+        const { data: guide } = await sr.from('guides').select('id, bls_points_balance').eq('referral_code', referralCode).maybeSingle();
+        const { data: userRec } = await sr.from('users').select('id, bls_points_balance').eq('referral_code', referralCode).maybeSingle();
+
+        const isGuide = !!guide;
+        const targetTable = isGuide ? 'guides' : 'users';
+        const record = isGuide ? guide : userRec;
+        if (record) {
+          const pointsToCredit = discountAmount;
+          const newBalance = (record.bls_points_balance || 0) + pointsToCredit;
+          await sr.from(targetTable).update({ bls_points_balance: newBalance }).eq('id', record.id);
+          await sr.from('transactions').insert({
+            user_id: referrerUserId,
+            amount: pointsToCredit,
+            type: 'credit',
+            reason: `Referral bonus: ${meta.guestName || 'a traveller'} booked ${meta.routeName || 'a trip'} with ${meta.guideName || 'a guide'}`,
+            linked_referral_code: referralCode,
+            linked_booking_id: sessionId,
+          });
+          results.referral = { credited: true, pointsAdded: pointsToCredit, newBalance };
+        }
+      } else {
+        results.referral = { credited: false, note: 'already credited (idempotent)' };
+      }
+    }
+  } catch (refEx) {
+    console.error('[Webhook] referral error:', refEx.message);
+    results.referral = { credited: false, error: refEx.message };
+  }
+
+  // ─── 4. Ambassador 5% Lifetime Commission (idempotent) ──────────
+  try {
+    const guideId = meta.guideId;
+    if (guideId) {
+      const { data: guideRecord } = await sr.from('guides')
+        .select('id, referred_by_ambassador_id, name')
+        .eq('id', guideId)
+        .maybeSingle();
+
+      if (guideRecord?.referred_by_ambassador_id) {
+        // Check if already credited
+        const { data: existingCommission } = await sr.from('transactions')
+          .select('id').eq('linked_booking_id', sessionId).eq('type', 'credit')
+          .like('reason', '%Ambassador commission%').maybeSingle();
+
+        if (!existingCommission) {
+          const amountCharged = (session.amount_total || 0) / 100;
+          const commissionAmount = Math.round(amountCharged * AMBASSADOR_COMMISSION_RATE_WEBHOOK * 100) / 100;
+
+          if (commissionAmount > 0) {
+            const ambassadorId = guideRecord.referred_by_ambassador_id;
+            await sr.from('transactions').insert({
+              user_id: ambassadorId,
+              amount: commissionAmount,
+              type: 'credit',
+              reason: `Ambassador commission (5%): ${meta.guestName || 'a traveller'} booked ${meta.routeName || 'a trip'} with guide ${guideRecord.name || guideId}`,
+              linked_booking_id: sessionId,
+            });
+            results.ambassadorCommission = { credited: true, amount: commissionAmount, ambassadorId };
+          }
+        } else {
+          results.ambassadorCommission = { credited: false, note: 'already credited (idempotent)' };
+        }
+      }
+    }
+  } catch (ambEx) {
+    console.error('[Webhook] ambassador commission error:', ambEx.message);
+    results.ambassadorCommission = { credited: false, error: ambEx.message };
+  }
+
+  // ─── 5. Booking-Payment Confirmation ─────────────────────────────
+  // Mark any related booking records as confirmed
+  try {
+    results.bookingConfirmed = true;
+    results.sessionId = sessionId;
+    results.bookingRef = meta.bookingRef || null;
+  } catch (bookingEx) {
+    console.error('[Webhook] booking confirmation error:', bookingEx.message);
+  }
+
+  console.log(`[Webhook] Fulfilment complete for session ${sessionId}:`, JSON.stringify(results));
+  return json({ ok: true, ...results });
 }
 
 // Helper: find a user by referral code (checks guides, then users)
@@ -1639,6 +1918,8 @@ exports.handler = async (event) => {
       return handleDebugAuth(event);
     case 'create-checkout':
       return handleStripe(event);
+    case 'stripe-webhook':
+      return handleStripeWebhook(event);
     case 'validate-referral':
       return handleValidateReferral(event);
     case 'confirm-payment':

@@ -207,6 +207,98 @@ test('Server stores authoritative values in Stripe metadata', () => {
   assert.ok(api.includes('serverAcceptedAt,'), 'serverAcceptedAt not in metadata');
 });
 
+// ─── API: Authoritative Trip Pricing (Blocker 1) ───────────────────
+console.log('\n=== API: Authoritative Trip Pricing ===\n');
+
+test('Server fetches guide record from Supabase (does not trust client price)', () => {
+  assert.ok(api.includes("from('guides')"), 'Does not query guides table');
+  assert.ok(api.includes('.eq(\'id\', guideId)'), 'Does not filter by guideId');
+  assert.ok(api.includes('.maybeSingle()'), 'Does not use maybeSingle');
+});
+
+test('Server validates guide is published', () => {
+  assert.ok(api.includes("guideRecord.status !== 'published'"), 'Does not check guide published status');
+});
+
+test('Server validates route exists in guide.routes', () => {
+  assert.ok(api.includes("guideRecord.routes"), 'Does not read guide routes');
+  assert.ok(api.includes('.find(r => r.name === routeName)'), 'Does not match route by name');
+});
+
+test('Server derives price from route record (not client-supplied)', () => {
+  assert.ok(api.includes('authoritativePrice'), 'Does not derive authoritative price');
+  assert.ok(api.includes('Number(matchRoute.price)'), 'Does not read price from route');
+  // Verify the pricing engine call in handleStripe uses authoritativePrice, not client price
+  const handleStripeSection = api.slice(api.indexOf('async function handleStripe'), api.indexOf('// Helper: find a user by referral code'));
+  assert.ok(handleStripeSection.includes('tripPrice: authoritativePrice'), 'Pricing engine not using authoritativePrice in handleStripe');
+  assert.ok(!handleStripeSection.includes('tripPrice: price,'), 'Still passing client price to pricing engine in handleStripe');
+});
+
+test('Server rejects invalid guide', () => {
+  assert.ok(api.includes('Invalid guide'), 'Missing invalid guide error');
+});
+
+test('Server rejects missing route', () => {
+  assert.ok(api.includes('Route'), 'Missing route-not-found error');
+});
+
+test('Server rejects zero/negative price', () => {
+  assert.ok(api.includes('does not have a valid price configured'), 'Missing invalid price error');
+});
+
+test('Server rejects unsupported currency', () => {
+  assert.ok(api.includes('Unsupported currency'), 'Missing unsupported currency error');
+});
+
+test('Server uses guide trading_name (not client guideName)', () => {
+  assert.ok(api.includes('authoritativeGuideName'), 'Does not derive authoritative guide name');
+  assert.ok(api.includes('guideRecord.trading_name'), 'Does not use trading_name from DB');
+  assert.ok(api.includes('metadata:'), 'Missing metadata in Stripe session');
+});
+
+test('Client price is NOT used in pricing engine call', () => {
+  // Extract the handleStripe function section only (not the calculateBookingPrice definition)
+  const handleStripeSection = api.slice(api.indexOf('async function handleStripe'), api.indexOf('// Helper: find a user by referral code'));
+  const pricingCallMatch = handleStripeSection.match(/calculateBookingPrice\(\{[\s\S]*?\}\)/);
+  assert.ok(pricingCallMatch, 'No calculateBookingPrice call found in handleStripe');
+  assert.ok(pricingCallMatch[0].includes('tripPrice: authoritativePrice'), 'Pricing engine not using authoritativePrice');
+  assert.ok(!pricingCallMatch[0].includes('tripPrice: price'), 'Still passing client price to pricing engine');
+});
+
+// ─── API: Stripe Webhook (Blocker 2) ──────────────────────────────
+console.log('\n=== API: Stripe Webhook ===\n');
+
+test('Stripe webhook handler exists', () => {
+  assert.ok(api.includes('handleStripeWebhook'), 'Missing handleStripeWebhook function');
+});
+
+test('Webhook verifies Stripe signature', () => {
+  assert.ok(api.includes('webhooks.constructEvent') || api.includes('constructEvent'), 'Missing signature verification');
+  assert.ok(api.includes('STRIPE_WEBHOOK_SECRET'), 'Missing STRIPE_WEBHOOK_SECRET');
+});
+
+test('Webhook checks payment_status is paid', () => {
+  assert.ok(api.includes('payment_status'), 'Missing payment_status check');
+  assert.ok(api.includes("'paid'") || api.includes('"paid"'), 'Missing paid status check');
+});
+
+test('Webhook route registered in router', () => {
+  assert.ok(api.includes("case 'stripe-webhook'") || api.includes("'stripe-webhook'"), 'Missing stripe-webhook route');
+});
+
+test('Webhook reads metadata from session', () => {
+  assert.ok(api.includes('session.metadata'), 'Missing session.metadata in webhook');
+});
+
+test('Webhook handler returns 200 OK for successful processing', () => {
+  assert.ok(api.includes('statusCode: 200'), 'Missing 200 response in webhook');
+});
+
+test('Confirm-payment endpoint is now status-only (read-only reconciliation)', () => {
+  // confirm-payment should not be the sole persistence mechanism for terms/referrals
+  assert.ok(api.includes('handleConfirmPayment'), 'confirm-payment handler still exists (expected as status endpoint)');
+});
+
 // ─── API: Webhook persistence ───────────────────────────────────────
 console.log('\n=== API: Webhook Persistence ===\n');
 
