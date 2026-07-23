@@ -4,41 +4,48 @@ const { createClient } = require('@supabase/supabase-js');
 // ALL authentication MUST go through this module.
 // NEVER use jwtDecode() or manual base64 decoding for auth decisions.
 //
-// How it works:
-//   1. Extract Bearer token from Authorization header
-//   2. Verify token cryptographically via Supabase auth.getUser(token)
-//   3. Load the public.users record using the verified user ID
-//   4. Check the required database role, account status, and ownership
+// Three explicit client types:
+//   1. createVerifyClient()  — used ONLY for auth.getUser(token) verification
+//   2. createServiceClient() — service-role, no JWT, bypasses RLS
+//   3. createUserClient(token) — user-scoped, JWT forwarded, subject to RLS
 //
-// Returns { user, profile, supabase } or throws an error response.
-
-const INACTIVE_ROLES = ['suspended', 'banned', 'disabled'];
+// After authentication:
+//   - Admin handlers use the service client for authorised writes.
+//   - Guide ownership is checked via verified user ID + explicit user_id filter.
+//   - User-scoped clients are used ONLY where a tested RLS policy intentionally
+//     permits the operation (not currently deployed).
 
 function json(body, status = 200) {
   return { statusCode: status, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
-/**
- * Create a Supabase client that forwards the user's JWT (for any
- * RLS policies that check auth.uid()). This client uses the service
- * role key so it bypasses RLS for server-side operations, but
- * forwards the JWT so RPCs or views that use auth.uid() still work.
- */
-function createClientWithToken(token) {
+// ─── Client Type 1: Token Verification ────────────────────────────────
+// Used ONLY for auth.getUser(token). Never for data operations.
+function createVerifyClient() {
   return createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
     db: { schema: 'public' },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
   });
 }
 
-/**
- * Create a service-role-only client (no JWT forwarded).
- * Use for purely server-side operations that must not be
- * influenced by any RLS auth.uid() checks.
- */
+// ─── Client Type 2: Service/Admin (bypasses RLS) ─────────────────────
+// Use for server-side operations after authentication is complete.
+// All RLS is bypassed. Must only be called after verify + role check.
 function createServiceClient() {
   return createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
     db: { schema: 'public' },
+  });
+}
+
+// ─── Client Type 3: User-Scoped (subject to RLS) ─────────────────────
+// Forwards the user's JWT. Supabase JS client will send the Bearer
+// token, so auth.uid() in RLS policies resolves to this user.
+// IMPORTANT: This client does NOT bypass RLS. It is subject to any
+// RLS policies defined on the target table. Use only where a tested
+// RLS policy intentionally allows the operation.
+function createUserClient(token) {
+  return createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+    db: { schema: 'public' },
+    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
   });
 }
 
@@ -55,6 +62,8 @@ function extractToken(event) {
 /**
  * Verify the Supabase JWT token and return the authenticated user.
  * This is the ONLY acceptable way to verify a token in this codebase.
+ * Uses the service-role key for getUser() — this is Supabase's recommended
+ * server-side pattern for JWT verification.
  *
  * @param {string} token - The raw JWT from the Authorization header
  * @returns {Promise<{user: object|null, error: Error|null}>}
@@ -62,8 +71,8 @@ function extractToken(event) {
 async function verifyToken(token) {
   if (!token) return { user: null, error: new Error('No token provided') };
   try {
-    const adminClient = createServiceClient();
-    const { data, error } = await adminClient.auth.getUser(token);
+    const client = createVerifyClient();
+    const { data, error } = await client.auth.getUser(token);
     if (error) return { user: null, error };
     if (!data?.user) return { user: null, error: new Error('No user returned from token verification') };
     return { user: data.user, error: null };
@@ -75,14 +84,22 @@ async function verifyToken(token) {
 /**
  * Authenticate a request and return verified user + database profile.
  *
+ * Authentication flow:
+ *   1. Extract Bearer token from request
+ *   2. Verify token cryptographically via auth.getUser()
+ *   3. Load public.users record using verified user ID (via service client)
+ *   4. Check required role from database (never from token payload)
+ *
+ * Returns { user, profile, supabase } on success,
+ * or { statusCode, body } error response on failure.
+ *
  * @param {object} event - Netlify function event
  * @param {object} options
- * @param {string} options.requiredRole - Required role from public.users table (e.g. 'admin', 'guide')
- * @param {string} options.requiredStatus - Required status field if applicable (e.g. 'published')
- * @returns {Promise<{user: object, profile: object, supabase: object}|{statusCode: number, body: string}>}
+ * @param {string} options.requiredRole - Required role from public.users table
+ * @returns {Promise<{user, profile, supabase}|{statusCode, body}>}
  */
 async function authenticate(event, options = {}) {
-  const { requiredRole, requiredStatus } = options;
+  const { requiredRole } = options;
 
   // Step 1: Extract token
   const token = extractToken(event);
@@ -94,7 +111,7 @@ async function authenticate(event, options = {}) {
     return json({ error: 'Invalid or expired token' }, 401);
   }
 
-  // Step 3: Load database profile (source of truth for role, status, etc.)
+  // Step 3: Load database profile (source of truth for role)
   const sr = createServiceClient();
   const { data: profile, error: profileErr } = await sr
     .from('users')
@@ -110,34 +127,20 @@ async function authenticate(event, options = {}) {
     return json({ error: 'User account not found' }, 401);
   }
 
-  // Step 4: Check account is not suspended/disabled
-  if (INACTIVE_ROLES.includes(profile.role)) {
-    return json({ error: 'Account is not active' }, 403);
-  }
-
-  // Step 5: Check required role (from DATABASE, never from token payload)
+  // Step 4: Check required role (from DATABASE, never from token payload)
   if (requiredRole && profile.role !== requiredRole) {
     return json({ error: `Access denied. Required role: ${requiredRole}` }, 403);
   }
 
-  // Step 6: Check required status (e.g. guide must be 'published')
-  if (requiredStatus) {
-    const statusField = options.statusTable || 'users';
-    const statusCol = options.statusColumn || 'role';
-    if (statusField === 'users') {
-      // Already loaded role; for guide status, we'll check separately
-    }
-  }
-
-  // Build the Supabase client with user's JWT forwarded
-  const supabase = createClientWithToken(token);
+  // Return the service client for post-auth data operations.
+  // Callers use this for authorised reads/writes after role verification.
+  const supabase = createServiceClient();
 
   return { user: verifiedUser, profile, supabase };
 }
 
 /**
  * Authenticate an admin request. Verifies JWT + checks database role = 'admin'.
- * Also verifies the user is not suspended.
  */
 async function authenticateAdmin(event) {
   return authenticate(event, { requiredRole: 'admin' });
@@ -152,18 +155,18 @@ async function authenticateGuide(event) {
 
 /**
  * Authenticate a request and verify guide ownership.
- * Returns the guide record along with auth data.
+ * Verifies JWT → role = 'guide' → loads guide record with user_id check.
  *
  * @param {object} event - Netlify function event
  * @returns {Promise<{user, profile, supabase, guide}|{statusCode, body}>}
  */
 async function authenticateGuideOwner(event) {
   const result = await authenticate(event, { requiredRole: 'guide' });
-  if (result.statusCode) return result; // Error response
+  if (result.statusCode) return result;
 
   const { user, profile, supabase } = result;
 
-  // Load guide record and verify ownership
+  // Load guide record — ownership verified via .eq('user_id', user.id)
   const { data: guide, error: guideErr } = await supabase
     .from('guides')
     .select('*')
@@ -198,7 +201,7 @@ async function authenticateGuideOrAmbassador(event) {
     return json({ error: 'Only guides and ambassadors can perform this action' }, 403);
   }
 
-  const supabase = createClientWithToken(token);
+  const supabase = createServiceClient();
   return { user: verifiedUser, profile, supabase };
 }
 
@@ -210,8 +213,8 @@ module.exports = {
   authenticateGuideOrAmbassador,
   verifyToken,
   extractToken,
-  createClientWithToken,
+  createVerifyClient,
   createServiceClient,
+  createUserClient,
   json,
-  INACTIVE_ROLES,
 };

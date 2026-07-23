@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabaseClient';
 
 const AuthContext = createContext(null);
 
+// SECURITY: Only safe columns are loaded from the users table in the browser.
+// NEVER select referral_code, bls_points_balance, or other server-only fields.
+const SAFE_USER_COLUMNS = 'id, email, name, role, created_at';
+
 function load(key, fallback) {
   try {
     const stored = localStorage.getItem(key);
@@ -44,7 +48,7 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
-        supabase.from('users').select('*').eq('id', session.user.id).single()
+        supabase.from('users').select(SAFE_USER_COLUMNS).eq('id', session.user.id).single()
           .then(({ data }) => {
             if (data) {
               setUser(data);
@@ -62,7 +66,7 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       if (session?.user) {
-        supabase.from('users').select('*').eq('id', session.user.id).single()
+        supabase.from('users').select(SAFE_USER_COLUMNS).eq('id', session.user.id).single()
           .then(({ data }) => {
             if (data) {
               setUser(data);
@@ -103,7 +107,7 @@ export function AuthProvider({ children }) {
 
     const { data: profile } = await supabase
       .from('users')
-      .select('*')
+      .select(SAFE_USER_COLUMNS)
       .eq('id', authData.user.id)
       .single();
 
@@ -133,7 +137,7 @@ export function AuthProvider({ children }) {
 
     const { data: profile } = await supabase
       .from('users')
-      .select('*')
+      .select(SAFE_USER_COLUMNS)
       .eq('id', authData.user.id)
       .single();
 
