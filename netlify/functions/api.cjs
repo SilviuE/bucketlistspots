@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const Stripe = require('stripe');
+const { authenticate, authenticateAdmin, authenticateGuide, authenticateGuideOwner, authenticateGuideOrAmbassador, createServiceClient } = require('./auth.cjs');
 
 // ─── Rate Limiting Architecture ────────────────────────────────────────
 // LAYER 1 (Primary): Netlify-native rate limiting (exports.config below)
@@ -23,6 +24,7 @@ function headers(cors) {
   };
 }
 
+// json() is defined locally with full CORS headers.
 function json(body, status = 200) {
   return { statusCode: status, headers: headers(true), body: JSON.stringify(body) };
 }
@@ -38,30 +40,10 @@ function reqBody(event) {
   }
 }
 
-function jwtDecode(token) {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-    return {
-      id: payload.sub,
-      email: payload.email,
-      role: payload.user_metadata?.role || payload.app_metadata?.role,
-      user_metadata: payload.user_metadata || {},
-      app_metadata: payload.app_metadata || {},
-    };
-  } catch { return null; }
-}
-
-async function authUser(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  const user = jwtDecode(token);
-  if (!user) return { user: null, error: new Error('Invalid token'), supabase: null };
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  return { user, error: null, supabase };
-}
+// SECURITY: jwtDecode and authUser have been REMOVED.
+// ALL authentication now goes through ./auth.cjs which uses
+// supabase.auth.getUser(token) for cryptographic JWT verification.
+// NEVER re-introduce jwtDecode() for authorization decisions.
 
 // ─── Pricing Engine (Spec v1.4) ───────────────────────────────────────
 const MAX_LISTED_TRIP_PRICE = 100000; // Configurable upper limit (GBP/EUR/USD)
@@ -522,29 +504,30 @@ async function handleConfirmPayment(event) {
 
 // GET /api/rewards — fetch balance + transaction history
 async function handleRewards(event) {
-  const { user, error: authErr, supabase: sr } = await authUser(event);
-  if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+  const result = await authenticate(event);
+  if (result.statusCode) return result;
+  const { user, profile, supabase: sr } = result;
 
   // Get balance from guides or users table
-  const isGuide = user.role === 'guide';
+  const isGuide = profile.role === 'guide';
   const table = isGuide ? 'guides' : 'users';
   const filterField = isGuide ? 'user_id' : 'id';
-  const { data: profile } = await sr.from(table).select('referral_code, bls_points_balance, trading_name, name').eq(filterField, user.id).maybeSingle();
-  if (!profile) return json({ error: 'Profile not found' }, 404);
+  const { data: profileData } = await sr.from(table).select('referral_code, bls_points_balance, trading_name, name').eq(filterField, user.id).maybeSingle();
+  if (!profileData) return json({ error: 'Profile not found' }, 404);
 
   // Get transaction history
   const { data: transactions } = await sr.from('transactions').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(50);
 
   // Auto-generate referral code if missing
-  let referralCode = profile.referral_code;
+  let referralCode = profileData.referral_code;
   if (!referralCode) {
-    referralCode = await generateReferralCode(user, table, isGuide ? profile.trading_name : profile.name, sr);
+    referralCode = await generateReferralCode(user, table, isGuide ? profileData.trading_name : profileData.name, sr);
     await sr.from(table).update({ referral_code: referralCode }).eq(filterField, user.id);
   }
 
   return json({
     referralCode,
-    balance: profile.bls_points_balance || 0,
+    balance: profileData.bls_points_balance || 0,
     transactions: transactions || [],
   });
 }
@@ -761,18 +744,11 @@ async function handleApplyAmbassador(event) {
 
 // ─── Admin Applications ───────────────────────────────────────────────
 async function handleApplications(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  const decoded = jwtDecode(token);
-  if (!decoded || !decoded.id) return json({ error: 'Unauthorized' }, 401);
+  const result = await authenticateAdmin(event);
+  if (result.statusCode) return result;
+  const { user, profile: adminProfile, supabase: supabaseClient } = result;
 
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-  });
-  const { data: userRecord } = await supabase.from('users').select('role').eq('id', decoded.id).maybeSingle();
-  const adminRole = userRecord?.role || decoded.role;
-  if (adminRole !== 'admin') return json({ error: `Forbidden: admin access required (role: "${adminRole}")` }, 403);
+  const supabase = supabaseClient;
 
   if (event.httpMethod === 'GET') {
     const type = event.queryStringParameters?.type || new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
@@ -849,77 +825,82 @@ async function handleApplications(event) {
 
 // ─── Guide Profile ────────────────────────────────────────────────────
 async function handleGuideProfile(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  const user = jwtDecode(token);
-  if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
-  if (user.role !== 'guide') return json({ error: `Guide access required (role: "${user.role}")` }, 403);
-
   const method = event.httpMethod;
   const rawPath = event.path || '';
   const path = rawPath.replace(/^.*?\/guide-profile\/?/, '').split('/').filter(Boolean);
 
-  const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-  });
+  // POST /submit only needs guide role (existing profile check happens later)
+  if (method === 'POST' && path[0] === 'submit') {
+    const result = await authenticateGuide(event);
+    if (result.statusCode) return result;
+    const { user, supabase: sr } = result;
+
+    const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    if (!existing) return json({ error: 'Guide profile not found' }, 404);
+    if (existing.status === 'published') return json({ error: 'Already published' }, 400);
+    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
+    if (updErr) return json({ error: updErr.message }, 500);
+    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
+    if (fetchErr) return json({ error: fetchErr.message }, 500);
+    if (!data || data.status !== 'pending') return json({ error: 'Status not updated' }, 500);
+
+    try {
+      if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
+        const html = `<h2>Guide Profile Ready for Review</h2><p><strong>${existing.trading_name || 'Unnamed Guide'}</strong> has submitted their profile.</p><table style="border-collapse:collapse;width:100%">${
+          [['Name', existing.trading_name], ['Location', existing.location],
+           ['Price', existing.price ? '$' + existing.price : '—'],
+           ['Languages', Array.isArray(existing.languages) ? existing.languages.join(', ') : existing.languages],
+           ['Experience', existing.experience + ' years'],
+           ['Routes', (existing.routes || []).length]].map(([k, v]) =>
+            `<tr style="border:1px solid #ddd"><td style="padding:6px;font-weight:700">${k}</td><td style="padding:6px">${v || '—'}</td></tr>`
+          ).join('')}</table><p><a href="https://bucketlistspots.com/admin/applications" style="background:#2A9D8F;color:#FFF;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:10px">Review in Dashboard</a></p><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'BucketListSpots <notifications@bucketlistspots.com>',
+            to: process.env.NOTIFICATION_EMAIL,
+            subject: `Guide Profile Ready: ${existing.trading_name || 'Unnamed Guide'} submitted for review`,
+            html,
+          }),
+        });
+      }
+    } catch (mailErr) { console.error('Email send failed:', mailErr); }
+
+    return json(data);
+  }
+
+  // All other guide profile operations require verified guide ownership
+  const authResult = await authenticateGuideOwner(event);
+  if (authResult.statusCode) return authResult;
+  const { user, supabase: sr, guide } = authResult;
 
   // GET — fetch my profile + routes
   if (method === 'GET') {
-    const { data: guide, error } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (error) return json({ error: error.message }, 500);
-    return json(guide || null);
+    return json(guide);
   }
 
   // PUT — create or update profile
   if (method === 'PUT') {
     const body = reqBody(event);
+    // P0-2 SECURITY FIX: Only content/branding fields allowed.
+    // Never allow: status, featured, verification flags, balances, referral, ownership fields.
     const allowed = ['trading_name', 'photo', 'hero_image', 'bio', 'why_independent', 'location',
-      'languages', 'experience', 'certifications', 'promise', 'badge', 'price', 'price_currency', 'status'];
+      'languages', 'experience', 'certifications', 'promise', 'badge', 'tagline',
+      'video_intro', 'tripadvisor_embed'];
     const updates = {};
     for (const key of allowed) {
       if (body[key] !== undefined) updates[key] = body[key];
     }
 
-    const { data: existing } = await sr.from('guides').select('id').eq('user_id', user.id).maybeSingle();
+    // Force status to remain at current value — guides cannot self-publish
+    // (Status can only be changed by POST /submit which sets 'pending',
+    //  or by admin via handleApplications PATCH)
 
-    if (existing) {
-      updates.updated_at = new Date().toISOString();
-      const { data, error } = await sr.from('guides').update(updates).eq('user_id', user.id).select().single();
-      if (error) return json({ error: error.message }, 500);
-      return json(data);
-    } else {
-      updates.user_id = user.id;
-      updates.status = 'draft';
-      updates.id = user.id.replace(/-/g, '').slice(0, 12);
-      updates.name = updates.trading_name || user.email?.split('@')[0] || 'Guide';
-
-      // Auto-link ambassador if this guide was referred via an ambassador code
-      if (!updates.referred_by_ambassador_id) {
-        try {
-          const { data: app } = await sr.from('guide_applications')
-            .select('referred_by_ambassador_code')
-            .eq('email', user.email)
-            .not('referred_by_ambassador_code', 'is', null)
-            .maybeSingle();
-          if (app?.referred_by_ambassador_code) {
-            const { data: ambassador } = await sr.from('users')
-              .select('id')
-              .eq('referral_code', app.referred_by_ambassador_code)
-              .maybeSingle();
-            if (ambassador) {
-              updates.referred_by_ambassador_id = ambassador.id;
-            }
-          }
-        } catch (e) {
-          console.error('Ambassador link failed:', e.message);
-        }
-      }
-
-      const { data, error } = await sr.from('guides').insert(updates).select().single();
-      if (error) return json({ error: error.message }, 500);
-      return json(data, 201);
-    }
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await sr.from('guides').update(updates).eq('user_id', user.id).select().single();
+    if (error) return json({ error: error.message }, 500);
+    return json(data);
   }
 
   // POST /routes — add a route
@@ -957,51 +938,14 @@ async function handleGuideProfile(event) {
     return json(data);
   }
 
-  // POST /submit — submit for admin review
-  if (method === 'POST' && path[0] === 'submit') {
-    const { data: existing } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (!existing) return json({ error: 'Guide profile not found' }, 404);
-    if (existing.status === 'published') return json({ error: 'Already published' }, 400);
-    const { error: updErr } = await sr.from('guides').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('user_id', user.id);
-    if (updErr) return json({ error: updErr.message }, 500);
-    const { data, error: fetchErr } = await sr.from('guides').select('*').eq('user_id', user.id).maybeSingle();
-    if (fetchErr) return json({ error: fetchErr.message }, 500);
-    if (!data || data.status !== 'pending') return json({ error: 'Status not updated' }, 500);
-
-    try {
-      if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
-        const html = `<h2>Guide Profile Ready for Review</h2><p><strong>${existing.trading_name || 'Unnamed Guide'}</strong> has submitted their profile.</p><table style="border-collapse:collapse;width:100%">${
-          [['Name', existing.trading_name], ['Location', existing.location],
-           ['Price', existing.price ? '$' + existing.price : '—'],
-           ['Languages', Array.isArray(existing.languages) ? existing.languages.join(', ') : existing.languages],
-           ['Experience', existing.experience + ' years'],
-           ['Routes', (existing.routes || []).length]].map(([k, v]) =>
-            `<tr style="border:1px solid #ddd"><td style="padding:6px;font-weight:700">${k}</td><td style="padding:6px">${v || '—'}</td></tr>`
-          ).join('')}</table><p><a href="https://bucketlistspots.com/admin/applications" style="background:#2A9D8F;color:#FFF;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:10px">Review in Dashboard</a></p><p style="color:#666;font-size:12px">Sent from BucketListSpots.com</p>`;
-        await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: 'BucketListSpots <notifications@bucketlistspots.com>',
-            to: process.env.NOTIFICATION_EMAIL,
-            subject: `Guide Profile Ready: ${existing.trading_name || 'Unnamed Guide'} submitted for review`,
-            html,
-          }),
-        });
-      }
-    } catch (mailErr) { console.error('Email send failed:', mailErr); }
-
-    return json(data);
-  }
-
   return json({ error: 'Method not allowed' }, 405);
 }
 
 // ─── Debug Auth ───────────────────────────────────────────────────────
 async function handleDebugAuth(event) {
-  const { user, error: authErr, supabase } = await authUser(event);
-  if (authErr || !user) return json({ error: 'Unauthorized', detail: authErr?.message }, 401);
-  const { data: profile, error: profErr } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+  const result = await authenticate(event);
+  if (result.statusCode) return result;
+  const { user, profile, supabase } = result;
   const srkSet = !!(process.env.SUPABASE_SERVICE_ROLE_KEY);
   const srkLen = process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.length : 0;
   // Try inserting a test row using service role key (should bypass RLS)
@@ -1010,10 +954,10 @@ async function handleDebugAuth(event) {
   if (insertErr) {
     // Also try listing existing guides
     const { data: guides, error: listErr } = await supabase.from('guides').select('id').limit(5);
-    return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertError: insertErr.message, listError: listErr?.message, guideCount: guides?.length });
+    return json({ userId: user.id, email: user.email, profile, profErr: null, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertError: insertErr.message, listError: listErr?.message, guideCount: guides?.length });
   }
   await supabase.from('guides').delete().eq('id', testId);
-  return json({ userId: user.id, email: user.email, profile, profErr: profErr?.message, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertTest: 'OK' });
+  return json({ userId: user.id, email: user.email, profile, profErr: null, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertTest: 'OK' });
 }
 
 // ─── Charity Challenges ───────────────────────────────────────────────
@@ -1060,8 +1004,9 @@ async function handleCharities(event) {
 async function handleCreateFundraising(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
-    const { user, error: authErr, supabase: sr } = await authUser(event);
-    if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, profile: userProfile, supabase: sr } = authResult;
 
     const { charityId, charityApiId, charityName, pageTitle, targetAmount, currency, eventDate, bookingId } = reqBody(event);
     if (!charityApiId || !pageTitle || !targetAmount) {
@@ -1080,12 +1025,12 @@ async function handleCreateFundraising(event) {
       targetAmount: parseFloat(targetAmount),
       currency: currency || 'GBP',
       eventDate,
-      userName: user.name || user.email,
+      userName: userProfile.name || verifiedUser.email,
     });
 
     // Save to database
     const { data: saved, error: dbErr } = await sr.from('fundraising_pages').insert({
-      user_id: user.id,
+      user_id: verifiedUser.id,
       booking_id: bookingId || null,
       charity_id: charityId || null,
       charity_api_id: charityApiId,
@@ -1122,13 +1067,14 @@ async function handleCreateFundraising(event) {
 async function handleMyFundraising(event) {
   if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
   try {
-    const { user, error: authErr, supabase: sr } = await authUser(event);
-    if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, supabase: sr } = authResult;
 
     const { data: pages, error } = await sr
       .from('fundraising_pages')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', verifiedUser.id)
       .order('created_at', { ascending: false });
 
     if (error) return json({ error: error.message }, 500);
@@ -1170,8 +1116,9 @@ async function handleMyFundraising(event) {
 async function handleSyncFundraising(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
-    const { user, error: authErr, supabase: sr } = await authUser(event);
-    if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, supabase: sr } = authResult;
 
     const { pageId } = reqBody(event);
     if (!pageId) return json({ error: 'Missing pageId' }, 400);
@@ -1181,7 +1128,7 @@ async function handleSyncFundraising(event) {
       .from('fundraising_pages')
       .select('*')
       .eq('id', pageId)
-      .eq('user_id', user.id)
+      .eq('user_id', verifiedUser.id)
       .maybeSingle();
 
     if (fetchErr || !page) return json({ error: 'Page not found' }, 404);
@@ -1251,20 +1198,13 @@ async function handleCharityWebhook(event) {
 
 // ─── Posts / News ─────────────────────────────────────────────────────
 async function handlePosts(event) {
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  let user = null;
-  try { user = jwtDecode(token); } catch { /* no auth — fine for GET */ }
-  const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    db: { schema: 'public' },
-    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-  });
+  const sr = createServiceClient();
   const url = new URL(event.url, 'http://localhost');
   const method = event.httpMethod;
   const path = url.pathname.replace(/^.*?\/api\/posts\/?/, '').split('/').filter(Boolean);
   const postId = path[0];
 
-  // GET /posts — fetch all posts or by user_id
+  // GET /posts — fetch all posts or by user_id (public, no auth required)
   if (method === 'GET') {
     const userId = url.searchParams.get('user_id');
     const authorRole = url.searchParams.get('author_role');
@@ -1276,38 +1216,40 @@ async function handlePosts(event) {
     return json(data || []);
   }
 
-  // POST /posts — create a post
+  // POST /posts — create a post (requires verified guide or ambassador)
   if (method === 'POST') {
-    if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
-    if (user.role !== 'guide' && user.role !== 'ambassador') return json({ error: 'Only guides and ambassadors can post' }, 403);
+    const authResult = await authenticateGuideOrAmbassador(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, profile: userProfile, supabase: authSr } = authResult;
+
     const body = reqBody(event);
     if (!body.content || body.content.length > 600) return json({ error: 'Content is required and must be 600 characters or less' }, 400);
-    // Look up author name
-    let authorName = user.email;
-    if (user.role === 'guide') {
-      const { data: g } = await sr.from('guides').select('trading_name').eq('user_id', user.id).maybeSingle();
+    // Look up author name from database profile
+    let authorName = userProfile.name || verifiedUser.email;
+    if (userProfile.role === 'guide') {
+      const { data: g } = await sr.from('guides').select('trading_name').eq('user_id', verifiedUser.id).maybeSingle();
       if (g?.trading_name) authorName = g.trading_name;
     }
-    console.log('[posts] Inserting:', { id: 'pst_' + Date.now(), user_id: user.id, content: body.content });
     const { data, error } = await sr.from('posts').insert({
       id: 'pst_' + Date.now(),
-      user_id: user.id,
-      author_role: user.role,
+      user_id: verifiedUser.id,
+      author_role: userProfile.role,
       author_name: authorName,
       content: body.content,
       image_url: body.image_url || null,
       video_url: body.video_url || null,
     }).select().single();
-    console.log('[posts] Insert result:', { data, error: error?.message });
     if (error) return json({ error: error.message }, 500);
     return json(data, 201);
   }
 
-  // DELETE /posts/:id — delete own post
+  // DELETE /posts/:id — delete own post (requires verified auth)
   if (method === 'DELETE') {
-    if (!user || !user.id) return json({ error: 'Unauthorized' }, 401);
+    const authResult = await authenticate(event);
+    if (authResult.statusCode) return authResult;
+    const { user: verifiedUser, supabase: authSr } = authResult;
     if (!postId) return json({ error: 'Missing post id' }, 400);
-    const { error } = await sr.from('posts').delete().eq('id', postId).eq('user_id', user.id);
+    const { error } = await sr.from('posts').delete().eq('id', postId).eq('user_id', verifiedUser.id);
     if (error) return json({ error: error.message }, 500);
     return json({ ok: true });
   }
@@ -1322,13 +1264,9 @@ async function handlePosts(event) {
 async function handleAdminPaymentReports(event) {
   if (event.httpMethod !== 'GET') return json({ error: 'Method not allowed' }, 405);
   try {
-    const token = (event.headers.authorization || '').replace('Bearer ', '');
-    if (!token) return json({ error: 'Unauthorized' }, 401);
-    let user;
-    try { user = jwtDecode(token); } catch { return json({ error: 'Invalid token' }, 401); }
-    if (user.role !== 'admin') return json({ error: 'Admin access required' }, 403);
-
-    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const authResult = await authenticateAdmin(event);
+    if (authResult.statusCode) return authResult;
+    const { supabase: sr } = authResult;
     const url = new URL(event.url, 'http://localhost');
     const format = url.searchParams.get('format') || 'json';
     const currency = url.searchParams.get('currency');
@@ -1401,13 +1339,9 @@ async function handleAdminPaymentReports(event) {
 // GET/PUT /api/admin/platform-config — view/update commission settings (admin-only)
 async function handleAdminPlatformConfig(event) {
   try {
-    const token = (event.headers.authorization || '').replace('Bearer ', '');
-    if (!token) return json({ error: 'Unauthorized' }, 401);
-    let user;
-    try { user = jwtDecode(token); } catch { return json({ error: 'Invalid token' }, 401); }
-    if (user.role !== 'admin') return json({ error: 'Admin access required' }, 403);
-
-    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+    const authResult = await authenticateAdmin(event);
+    if (authResult.statusCode) return authResult;
+    const { supabase: sr } = authResult;
 
     if (event.httpMethod === 'GET') {
       const { data, error } = await sr.from('platform_config').select('*').eq('id', 1).maybeSingle();

@@ -1,23 +1,16 @@
 const { createClient } = require('@supabase/supabase-js');
+const { authenticateAdmin, json } = require('./auth.cjs');
 
 exports.handler = async (event) => {
   const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type,Authorization', 'Content-Type': 'application/json' };
 
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
 
-  const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-  const authHeader = event.headers.authorization || '';
-  const token = authHeader.replace('Bearer ', '');
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-  if (authError || !user) {
-    return { statusCode: 401, headers, body: JSON.stringify({ error: 'Unauthorized' }) };
-  }
-
-  const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single();
-  if (!profile || profile.role !== 'admin') {
-    return { statusCode: 403, headers, body: JSON.stringify({ error: 'Forbidden' }) };
-  }
+  // P0-1: Use cryptographic JWT verification + database role check
+  const authResult = await authenticateAdmin(event);
+  if (authResult.statusCode) return authResult;
+  const { supabase: supabaseClient } = authResult;
+  const supabase = supabaseClient;
 
   if (event.httpMethod === 'GET') {
     const type = new URL(event.url, 'http://localhost').searchParams.get('type') || 'all';
