@@ -159,7 +159,7 @@ exports.handler = async (event) => {
       })
       .eq('event_id', eventId);
     console.error(`[Webhook] Session ${sessionId} missing required metadata`);
-    return json({ ok: false, error: 'Missing required metadata', eventId }, 400);
+    return json({ ok: true, ignored: 'missing_metadata', eventId });
   }
 
   const fulfilmentErrors = [];

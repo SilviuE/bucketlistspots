@@ -504,6 +504,37 @@ test('Terminal non-retryable failure is not repeatedly processed', () => {
   assert.ok(freshInstall.includes('already_ignored'), 'Missing already_ignored in RPC');
   assert.ok(webhook.includes("retryable: false"), 'Missing retryable: false on terminal states');
   assert.ok(webhook.includes("retryable: true"), 'Missing retryable: true on transient failures');
+  assert.ok(freshInstall.includes('failed_non_retryable'), 'Missing failed_non_retryable in RPC');
+});
+
+test('Failed + retryable=true is claimable by RPC', () => {
+  const claimSection = freshInstall.slice(freshInstall.indexOf('-- 2. Claim retry'));
+  assert.ok(claimSection.includes("status = 'failed' AND retryable = true"), 'RPC does not require retryable=true for failed claims');
+  assert.ok(freshInstall.includes('claimed_retry'), 'Missing claimed_retry path for retryable failed events');
+});
+
+test('Failed + retryable=false is not claimable (returns failed_non_retryable)', () => {
+  assert.ok(freshInstall.includes('failed_non_retryable'), 'Missing failed_non_retryable action in RPC');
+  assert.ok(webhookUpgrade.includes('failed_non_retryable'), 'Missing failed_non_retryable in upgrade RPC');
+});
+
+test('Claimed retry sets retryable=false while in processing', () => {
+  const claimSection = freshInstall.slice(freshInstall.indexOf('-- 2. Claim retry'));
+  assert.ok(claimSection.includes('retryable = false'), 'RPC does not set retryable=false on failed claim');
+});
+
+test('Invalid metadata returns HTTP 200 (not 400)', () => {
+  const metaSection = webhook.slice(webhook.indexOf('Missing required metadata'));
+  assert.ok(!metaSection.includes('400'), 'Metadata error still returns 400');
+  assert.ok(metaSection.includes('200') || webhook.includes("ok: true, ignored: 'missing_metadata'"), 'Metadata error does not return 200');
+});
+
+test('Invalid metadata: terminal ignored, no fulfilment side effects', () => {
+  assert.ok(webhook.includes('missing_metadata'), 'Missing skip_reason for metadata errors');
+  const metaSection = webhook.slice(webhook.indexOf('meta.routeName'), webhook.indexOf('const fulfilmentErrors'));
+  assert.ok(metaSection.includes("'ignored'"), 'Metadata error does not use ignored terminal state');
+  assert.ok(metaSection.includes('retryable: false'), 'Metadata error retryable not set to false');
+  assert.ok(!metaSection.includes('booking_confirmations'), 'Metadata path still reaches fulfilment code');
 });
 
 // ─── Migration: claim_webhook_event RPC ──────────────────────────────

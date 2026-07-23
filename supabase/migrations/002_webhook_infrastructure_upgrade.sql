@@ -253,10 +253,10 @@ BEGIN
     RETURN;
   END IF;
 
-  -- 2. Claim retry (status = 'failed')
+  -- 2. Claim retry (status = 'failed' AND retryable = true)
   UPDATE public.webhook_event_inbox
-  SET status = 'processing', processed_at = NOW(), error_message = NULL
-  WHERE event_id = p_event_id AND status = 'failed';
+  SET status = 'processing', processed_at = NOW(), error_message = NULL, retryable = false
+  WHERE event_id = p_event_id AND status = 'failed' AND retryable = true;
 
   GET DIAGNOSTICS v_updated = ROW_COUNT;
   IF v_updated > 0 THEN
@@ -290,6 +290,8 @@ BEGIN
     action := 'already_ignored';
   ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'processing') THEN
     action := 'active_processing';
+  ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'failed' AND retryable = false) THEN
+    action := 'failed_non_retryable';
   ELSIF EXISTS (SELECT 1 FROM public.webhook_event_inbox WHERE event_id = p_event_id AND status = 'received') THEN
     action := 'recent_received';
   ELSE
