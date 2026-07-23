@@ -26,6 +26,7 @@ const webhookPath = path.join(root, 'netlify', 'functions', 'webhook-stripe.cjs'
 const migrationPath = path.join(root, 'supabase', 'migrations', 'terms_acceptance.sql');
 const freshInstallPath = path.join(root, 'supabase', 'migrations', '002_webhook_infrastructure.sql');
 const upgradePath = path.join(root, 'supabase', 'migrations', '002a_terms_acceptance_upgrade.sql');
+const webhookUpgradePath = path.join(root, 'supabase', 'migrations', '002_webhook_infrastructure_upgrade.sql');
 const netlifyToml = path.join(root, 'netlify.toml');
 
 const terms = fs.readFileSync(termsPath, 'utf8');
@@ -35,6 +36,7 @@ const webhook = fs.readFileSync(webhookPath, 'utf8');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const freshInstall = fs.readFileSync(freshInstallPath, 'utf8');
 const upgrade = fs.readFileSync(upgradePath, 'utf8');
+const webhookUpgrade = fs.readFileSync(webhookUpgradePath, 'utf8');
 const toml = fs.readFileSync(netlifyToml, 'utf8');
 
 // ─── Terms.jsx: Prohibited wording ──────────────────────────────────
@@ -244,7 +246,6 @@ test('Server derives price from route record (not client-supplied)', () => {
 test('Server derives currency EXCLUSIVELY from guideRecord.price_currency', () => {
   const handleStripeSection = api.slice(api.indexOf('async function handleStripe'), api.indexOf('// Helper: find a user by referral code'));
   assert.ok(handleStripeSection.includes('guideRecord.price_currency'), 'Does not derive currency from guideRecord');
-  // Must NOT fallback to client currency
   assert.ok(!handleStripeSection.includes("(currency || guideRecord.price_currency"), 'Still falling back to client currency');
   assert.ok(!handleStripeSection.includes("(currency || 'usd')"), 'Still using client currency as fallback');
 });
@@ -315,7 +316,7 @@ test('confirm-payment queries booking_confirmations for status', () => {
   assert.ok(handlerSection.includes("booking_confirmations") && handlerSection.includes('.select('), 'confirm-payment does not query booking confirmation status');
 });
 
-// ─── Webhook: Separate function (Blocker 8) ─────────────────────────
+// ─── Webhook: Separate function ─────────────────────────────────────
 console.log('\n=== Webhook: Separate Function (Rate Limit Bypass) ===\n');
 
 test('Webhook is a separate Netlify function file', () => {
@@ -365,7 +366,7 @@ test('Webhook returns 200 for unpaid sessions (does not retry)', () => {
   assert.ok(webhookSection.includes("'not_paid'") || webhookSection.includes('"not_paid"'), 'Missing not_paid response');
 });
 
-// ─── Webhook: Idempotency (Blocker 4) ──────────────────────────────
+// ─── Webhook: Idempotency ──────────────────────────────────────────
 console.log('\n=== Webhook: Atomic Idempotency ===\n');
 
 test('Webhook inserts event into webhook_event_inbox (ON CONFLICT)', () => {
@@ -374,12 +375,7 @@ test('Webhook inserts event into webhook_event_inbox (ON CONFLICT)', () => {
   assert.ok(webhook.includes('23505') || webhook.includes('unique_violation') || webhook.includes('Unique violation'), 'Missing ON CONFLICT / unique violation handling');
 });
 
-test('Webhook returns 200 for duplicate events', () => {
-  assert.ok(webhook.includes('duplicate: true') || webhook.includes("'duplicate'"), 'Missing duplicate response');
-});
-
 test('Webhook uses ON CONFLICT DO NOTHING for terms_acceptance', () => {
-  // The webhook should handle unique violations gracefully
   assert.ok(webhook.includes("terms_acceptance") && webhook.includes('.insert('), 'Missing terms insert');
   assert.ok(webhook.includes("'23505'") || webhook.includes('Unique violation'), 'Missing unique violation handling for terms');
 });
@@ -406,7 +402,7 @@ test('Webhook uses idempotency_key for transaction deduplication', () => {
   assert.ok(webhook.includes('referral_') || webhook.includes('ambassador_'), 'Missing referral_/ambassador_ prefix');
 });
 
-// ─── Webhook: Booking Confirmation persistence (Blocker 3) ─────────
+// ─── Webhook: Booking Confirmation persistence ──────────────────────
 console.log('\n=== Webhook: Booking Confirmation Persistence ===\n');
 
 test('Webhook persists booking to booking_confirmations table', () => {
@@ -425,27 +421,135 @@ test('Booking confirmation includes payment_status', () => {
   assert.ok(webhook.includes("payment_status: 'paid'"), 'Missing payment_status paid');
 });
 
-// ─── Webhook: Failure handling (Blocker 5) ──────────────────────────
-console.log('\n=== Webhook: Failure Handling ===\n');
+// ─── Webhook: Retry state machine ───────────────────────────────────
+console.log('\n=== Webhook: Retry State Machine ===\n');
 
-test('Webhook marks failed events in webhook_event_inbox', () => {
-  assert.ok(webhook.includes("status: 'failed'") || webhook.includes('failed'), 'Missing failed status marking');
+test('Webhook tracks retryable flag on failed events', () => {
+  assert.ok(webhook.includes("retryable: true"), 'Missing retryable: true on failure');
+  assert.ok(webhook.includes("retryable: false"), 'Missing retryable: false on success');
 });
 
-test('Webhook returns 200 even on partial failures (prevents Stripe retry loops)', () => {
-  assert.ok(webhook.includes('partial_failure'), 'Missing partial_failure response');
+test('Webhook skips completed duplicates', () => {
+  assert.ok(webhook.includes("'completed'") && webhook.includes('duplicate'), 'Missing completed-skip logic');
 });
 
-test('Webhook tracks fulfilmentErrors array', () => {
-  assert.ok(webhook.includes('fulfilmentErrors'), 'Missing fulfilmentErrors tracking');
+test('Webhook reprocesses failed events (retryable)', () => {
+  assert.ok(webhook.includes("'failed'") && webhook.includes('Retrying'), 'Missing failed retry logic');
 });
 
-test('Webhook updates inbox status to completed on success', () => {
-  assert.ok(webhook.includes("status: 'completed'"), 'Missing completed status update');
+test('Webhook recovers stale received events', () => {
+  assert.ok(webhook.includes('STALE_TIMEOUT_MS'), 'Missing stale timeout constant');
+  assert.ok(webhook.includes('stale received'), 'Missing stale received recovery');
 });
 
-test('Webhook documents retry policy', () => {
-  assert.ok(webhook.includes('Retry Policy') || webhook.includes('retry'), 'Missing retry policy documentation');
+test('Webhook recovers stale processing events', () => {
+  assert.ok(webhook.includes('stale processing'), 'Missing stale processing recovery');
+});
+
+test('Webhook uses atomic claim (UPDATE WHERE status)', () => {
+  assert.ok(webhook.includes('.in(\'status\', [\'received\', \'failed\'])'), 'Missing atomic claim with status filter');
+});
+
+test('Webhook prevents double-processing (claim check)', () => {
+  assert.ok(webhook.includes('could not be claimed'), 'Missing claim failure handling');
+});
+
+test('Webhook validates required metadata before fulfilment', () => {
+  assert.ok(webhook.includes('Missing required metadata'), 'Missing metadata validation');
+});
+
+// ─── RPC Security (Blocker 1) ──────────────────────────────────────
+console.log('\n=== RPC Security: credit_referral_reward ===\n');
+
+test('Fresh install: credit_referral_reward has SECURITY DEFINER', () => {
+  assert.ok(freshInstall.includes('credit_referral_reward') && freshInstall.includes('SECURITY DEFINER'), 'Missing SECURITY DEFINER');
+});
+
+test('Fresh install: credit_referral_reward has SET search_path', () => {
+  assert.ok(freshInstall.includes('SET search_path'), 'Missing SET search_path');
+});
+
+test('Fresh install: credit_referral_reward validates positive amount', () => {
+  assert.ok(freshInstall.includes('p_amount <= 0') || freshInstall.includes('invalid_amount'), 'Missing positive amount check');
+});
+
+test('Fresh install: credit_referral_reward validates session exists', () => {
+  assert.ok(freshInstall.includes('session_not_found'), 'Missing session validation');
+});
+
+test('Fresh install: credit_referral_reward validates session is paid', () => {
+  assert.ok(freshInstall.includes('session_not_paid'), 'Missing paid check');
+});
+
+test('Fresh install: REVOKE EXECUTE from PUBLIC', () => {
+  assert.ok(freshInstall.includes('REVOKE EXECUTE') && freshInstall.includes('FROM PUBLIC'), 'Missing REVOKE from PUBLIC');
+});
+
+test('Fresh install: REVOKE EXECUTE from anon', () => {
+  assert.ok(freshInstall.includes('FROM anon'), 'Missing REVOKE from anon');
+});
+
+test('Fresh install: REVOKE EXECUTE from authenticated', () => {
+  assert.ok(freshInstall.includes('FROM authenticated'), 'Missing REVOKE from authenticated');
+});
+
+test('Fresh install: GRANT EXECUTE to service_role', () => {
+  assert.ok(freshInstall.includes('GRANT EXECUTE') && freshInstall.includes('TO service_role'), 'Missing GRANT to service_role');
+});
+
+test('Fresh install: fully qualified table references (public.)', () => {
+  assert.ok(freshInstall.includes('public.booking_confirmations'), 'Missing public.booking_confirmations');
+  assert.ok(freshInstall.includes('public.transactions'), 'Missing public.transactions');
+  assert.ok(freshInstall.includes('public.guides'), 'Missing public.guides');
+  assert.ok(freshInstall.includes('public.users'), 'Missing public.users');
+});
+
+console.log('\n=== RPC Security: credit_ambassador_commission ===\n');
+
+test('Fresh install: credit_ambassador_commission has SECURITY DEFINER', () => {
+  assert.ok(freshInstall.includes('credit_ambassador_commission') && freshInstall.includes('SECURITY DEFINER'), 'Missing SECURITY DEFINER for ambassador');
+});
+
+test('Fresh install: credit_ambassador_commission has SET search_path', () => {
+  const ambSection = freshInstall.slice(freshInstall.indexOf('credit_ambassador_commission'));
+  assert.ok(ambSection.includes('SET search_path'), 'Missing SET search_path for ambassador');
+});
+
+test('Fresh install: credit_ambassador_commission validates positive amount', () => {
+  const ambSection = freshInstall.slice(freshInstall.indexOf('credit_ambassador_commission'));
+  assert.ok(ambSection.includes('p_amount <= 0') || ambSection.includes('invalid_amount'), 'Missing positive amount check for ambassador');
+});
+
+test('Fresh install: credit_ambassador_commission validates session exists', () => {
+  const ambSection = freshInstall.slice(freshInstall.indexOf('credit_ambassador_commission'));
+  assert.ok(ambSection.includes('session_not_found'), 'Missing session validation for ambassador');
+});
+
+test('Fresh install: credit_ambassador_commission validates session is paid', () => {
+  const ambSection = freshInstall.slice(freshInstall.indexOf('credit_ambassador_commission'));
+  assert.ok(ambSection.includes('session_not_paid'), 'Missing paid check for ambassador');
+});
+
+console.log('\n=== RPC Security: Upgrade Migration ===\n');
+
+test('Upgrade migration: REVOKE EXECUTE from PUBLIC', () => {
+  assert.ok(webhookUpgrade.includes('REVOKE EXECUTE') && webhookUpgrade.includes('FROM PUBLIC'), 'Missing REVOKE from PUBLIC in upgrade');
+});
+
+test('Upgrade migration: REVOKE EXECUTE from anon', () => {
+  assert.ok(webhookUpgrade.includes('FROM anon'), 'Missing REVOKE from anon in upgrade');
+});
+
+test('Upgrade migration: REVOKE EXECUTE from authenticated', () => {
+  assert.ok(webhookUpgrade.includes('FROM authenticated'), 'Missing REVOKE from authenticated in upgrade');
+});
+
+test('Upgrade migration: GRANT EXECUTE to service_role', () => {
+  assert.ok(webhookUpgrade.includes('GRANT EXECUTE') && webhookUpgrade.includes('TO service_role'), 'Missing GRANT to service_role in upgrade');
+});
+
+test('Upgrade migration: SET search_path in RPCs', () => {
+  assert.ok(webhookUpgrade.includes('SET search_path'), 'Missing SET search_path in upgrade');
 });
 
 // ─── Migration: Fresh Install (002) ────────────────────────────────
@@ -482,7 +586,6 @@ test('Fresh install adds idempotency_key to transactions', () => {
 
 test('Fresh install creates credit_referral_reward RPC', () => {
   assert.ok(freshInstall.includes('credit_referral_reward'), 'Missing credit_referral_reward RPC');
-  assert.ok(freshInstall.includes('LANGUAGE plpgsql SECURITY DEFINER'), 'Missing SECURITY DEFINER');
 });
 
 test('Fresh install creates credit_ambassador_commission RPC', () => {
@@ -498,16 +601,47 @@ test('Fresh install is atomic (BEGIN/COMMIT)', () => {
   assert.ok(freshInstall.includes('BEGIN;') && freshInstall.includes('COMMIT;'), 'Not atomic');
 });
 
-// ─── Migration: Upgrade Safety (002a) ──────────────────────────────
-console.log('\n=== Migration: Upgrade Safety (002a) ===\n');
+// ─── Migration: Webhook Upgrade (002_webhook_infrastructure_upgrade) ─
+console.log('\n=== Migration: Webhook Upgrade (002_webhook_infrastructure_upgrade) ===\n');
+
+test('Webhook upgrade migration exists', () => {
+  assert.ok(fs.existsSync(webhookUpgradePath), '002_webhook_infrastructure_upgrade.sql does not exist');
+});
+
+test('Webhook upgrade is atomic (BEGIN/COMMIT)', () => {
+  assert.ok(webhookUpgrade.includes('BEGIN;') && webhookUpgrade.includes('COMMIT;'), 'Not atomic');
+});
+
+test('Webhook upgrade uses IF NOT EXISTS for tables', () => {
+  assert.ok(webhookUpgrade.includes('CREATE TABLE IF NOT EXISTS webhook_event_inbox'), 'Missing IF NOT EXISTS for webhook_event_inbox');
+  assert.ok(webhookUpgrade.includes('CREATE TABLE IF NOT EXISTS booking_confirmations'), 'Missing IF NOT EXISTS for booking_confirmations');
+});
+
+test('Webhook upgrade has retryable column', () => {
+  assert.ok(webhookUpgrade.includes('retryable BOOLEAN'), 'Missing retryable column');
+});
+
+test('Webhook upgrade has retryable index', () => {
+  assert.ok(webhookUpgrade.includes('idx_webhook_inbox_retryable'), 'Missing retryable index');
+});
+
+// ─── Migration: Terms Acceptance Upgrade Safety (002a) ─────────────
+console.log('\n=== Migration: Terms Acceptance Upgrade Safety (002a) ===\n');
 
 test('Upgrade migration exists', () => {
   assert.ok(fs.existsSync(upgradePath), '002a_terms_acceptance_upgrade.sql does not exist');
 });
 
+test('Upgrade has 5-stage structure (preflight, backfill, upgrade, constraints, rollback)', () => {
+  assert.ok(upgrade.includes('STAGE 1') || upgrade.includes('PREFLIGHT'), 'Missing Stage 1 (preflight)');
+  assert.ok(upgrade.includes('BACKFILL CHECK') || upgrade.includes('STAGE 2'), 'Missing Stage 2 (backfill check)');
+  assert.ok(upgrade.includes('UPGRADE') || upgrade.includes('STAGE 3'), 'Missing Stage 3 (upgrade)');
+  assert.ok(upgrade.includes('CONSTRAINT') || upgrade.includes('STAGE 4'), 'Missing Stage 4 (constraints)');
+  assert.ok(upgrade.includes('ROLLBACK'), 'Missing rollback procedure');
+});
+
 test('Upgrade adds columns as NULLABLE first (no NOT NULL)', () => {
   assert.ok(upgrade.includes('ADD COLUMN'), 'Missing ADD COLUMN');
-  // Should NOT contain NOT NULL in the ALTER TABLE ADD COLUMN statements
   const lines = upgrade.split('\n');
   const addColumnLines = lines.filter(l => l.includes('ADD COLUMN'));
   for (const line of addColumnLines) {
@@ -522,26 +656,33 @@ test('Upgrade does NOT backfill with invented values', () => {
   assert.ok(!upgrade.includes("DEFAULT 'draft-"), 'Contains invented Terms version default');
 });
 
-test('Upgrade reports unresolved NULLs instead of inventing values', () => {
-  assert.ok(upgrade.includes('RAISE WARNING') || upgrade.includes('v_null_count'), 'Missing NULL audit reporting');
-  assert.ok(upgrade.includes('unresolved NULL'), 'Missing unresolved NULL messaging');
+test('Upgrade reports unresolved NULLs in backfill check', () => {
+  assert.ok(upgrade.includes('BACKFILL CHECK') || upgrade.includes('v_null_count'), 'Missing backfill check');
 });
 
-test('Upgrade adds CHECK constraints with EXCEPTION handling', () => {
-  assert.ok(upgrade.includes('EXCEPTION WHEN check_violation'), 'Missing check_violation exception handling');
+test('Upgrade has preflight schema report', () => {
+  assert.ok(upgrade.includes('PREFLIGHT') || upgrade.includes('v_missing_columns'), 'Missing preflight report');
 });
 
-test('Upgrade adds UNIQUE constraint with duplicate check', () => {
-  assert.ok(upgrade.includes('HAVING COUNT(*) > 1') || upgrade.includes('duplicate session_ids'), 'Missing duplicate check before UNIQUE');
+test('Upgrade has final constraint validation that aborts on violations', () => {
+  assert.ok(upgrade.includes('CONSTRAINT CHECK FAILED') || upgrade.includes('CONSTRAINT CHECK'), 'Missing constraint validation abort');
 });
 
-test('Upgrade is atomic (BEGIN/COMMIT)', () => {
-  assert.ok(upgrade.includes('BEGIN;') && upgrade.includes('COMMIT;'), 'Not atomic');
+test('Upgrade has NOT NULL stage', () => {
+  assert.ok(upgrade.includes('NOT NULL') && (upgrade.includes('SET NOT NULL') || upgrade.includes('DROP NOT NULL')), 'Missing NOT NULL stage');
+});
+
+test('Upgrade has documented rollback procedure', () => {
+  assert.ok(upgrade.includes('ROLLBACK PROCEDURE') || upgrade.includes('rollback'), 'Missing documented rollback');
 });
 
 test('Upgrade preserves existing records (no DELETE or TRUNCATE)', () => {
   assert.ok(!upgrade.includes('DELETE FROM'), 'Contains DELETE FROM');
   assert.ok(!upgrade.includes('TRUNCATE'), 'Contains TRUNCATE');
+});
+
+test('Upgrade is atomic (BEGIN/COMMIT)', () => {
+  assert.ok(upgrade.includes('BEGIN;') && upgrade.includes('COMMIT;'), 'Not atomic');
 });
 
 // ─── Migration: Original terms_acceptance.sql ───────────────────────

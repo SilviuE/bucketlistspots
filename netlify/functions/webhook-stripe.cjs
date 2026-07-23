@@ -5,29 +5,31 @@
 //
 // Architecture:
 //   1. Verify Stripe signature (mandatory, returns 400 on failure)
-//   2. Insert event into webhook_event_inbox (ON CONFLICT DO NOTHING)
-//   3. If new event → process fulfilment atomically
-//   4. If duplicate → return 200 OK immediately
-//   5. Return 200 promptly to Stripe (within timeout)
+//   2. Record event in webhook_event_inbox (ON CONFLICT DO NOTHING)
+//   3. Attempt atomic claim: SET status='processing' WHERE status IN ('received','failed')
+//   4. If claim succeeded → process fulfilment atomically
+//   5. If already completed → return 200 OK immediately (skip)
+//   6. If already processing → return 200 OK (another worker active)
+//   7. Return 200 promptly to Stripe (within timeout)
 //
-// Idempotency:
-//   - webhook_event_inbox: event_id PRIMARY KEY (Stripe event ID)
-//   - terms_acceptance: session_id UNIQUE, ON CONFLICT DO NOTHING
-//   - payment_reports: session_id UNIQUE, ON CONFLICT DO NOTHING
-//   - booking_confirmations: session_id UNIQUE, ON CONFLICT DO NOTHING
-//   - transactions: idempotency_key UNIQUE, ON CONFLICT DO NOTHING
+// State Machine:
+//   received → processing → completed
+//                      └→ failed → processing (retry via Stripe Dashboard)
+//   stale received (>5min) → failed (recoverable)
+//   stale processing (>5min) → failed (recoverable)
 //
-// Retry policy (documented):
+// Retry Policy:
 //   - Stripe retries failed webhooks with exponential backoff (up to 3 days)
-//   - Our handler returns 200 early for duplicates; only 500 for true failures
-//   - Failed events are recorded in webhook_event_inbox with status='failed'
-//   - Manual retry: re-trigger from Stripe Dashboard or call fulfilment directly
-//   - Alerting: console.error logs are captured by Netlify function logs
+//   - Completed duplicates: skip (return 200)
+//   - Failed events: claimable and reprocessable (Stripe Dashboard resend)
+//   - Stale received/processing: auto-recovered on next event delivery
+//   - Concurrent workers: atomic claim prevents double-processing
 
 const { createClient } = require('@supabase/supabase-js');
 const Stripe = require('stripe');
 
 const AMBASSADOR_COMMISSION_RATE = 0.05;
+const STALE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes — events older than this are stale
 
 function json(body, status = 200) {
   return {
@@ -70,6 +72,7 @@ exports.handler = async (event) => {
   const session = stripeEvent.data.object;
   const sessionId = session.id;
 
+  let isNewEvent = false;
   try {
     const { error: inboxErr } = await sr.from('webhook_event_inbox').insert({
       event_id: eventId,
@@ -80,23 +83,78 @@ exports.handler = async (event) => {
     });
 
     if (inboxErr) {
-      // Unique violation = duplicate event → already processed or processing
       if (inboxErr.code === '23505') {
-        console.log(`[Webhook] Duplicate event ${eventId}, skipping`);
-        return json({ ok: true, duplicate: true, eventId });
+        // Duplicate event — check if it's retryable (failed) or stale (received/processing)
+        const { data: existing } = await sr.from('webhook_event_inbox')
+          .select('status, processed_at')
+          .eq('event_id', eventId)
+          .maybeSingle();
+
+        if (!existing) {
+          console.log(`[Webhook] Duplicate event ${eventId}, no record found — skipping`);
+          return json({ ok: true, duplicate: true, eventId });
+        }
+
+        if (existing.status === 'completed') {
+          console.log(`[Webhook] Duplicate event ${eventId} already completed — skipping`);
+          return json({ ok: true, duplicate: true, status: 'completed', eventId });
+        }
+
+        if (existing.status === 'processing') {
+          const elapsed = Date.now() - new Date(existing.processed_at || existing.received_at || Date.now()).getTime();
+          if (elapsed < STALE_TIMEOUT_MS) {
+            console.log(`[Webhook] Event ${eventId} being processed by another worker — skipping`);
+            return json({ ok: true, duplicate: true, status: 'processing', eventId });
+          }
+          // Stale processing — fall through to reprocess
+          console.log(`[Webhook] Event ${eventId} stale processing (${Math.round(elapsed / 1000)}s) — reprocessing`);
+        }
+
+        if (existing.status === 'failed') {
+          console.log(`[Webhook] Retrying failed event ${eventId}`);
+        }
+
+        if (existing.status === 'received') {
+          const elapsed = Date.now() - new Date(existing.received_at || Date.now()).getTime();
+          if (elapsed < STALE_TIMEOUT_MS) {
+            console.log(`[Webhook] Event ${eventId} already received recently — skipping`);
+            return json({ ok: true, duplicate: true, status: 'received', eventId });
+          }
+          console.log(`[Webhook] Retrying stale received event ${eventId} (${Math.round(elapsed / 1000)}s)`);
+        }
+
+        // Retryable: failed, stale received, or stale processing — attempt claim
+        isNewEvent = true; // treat as "needs processing"
+      } else {
+        console.error('[Webhook] Inbox insert error:', inboxErr.message);
+        return json({ error: 'Failed to record event' }, 500);
       }
-      console.error('[Webhook] Inbox insert error:', inboxErr.message);
-      return json({ error: 'Failed to record event' }, 500);
+    } else {
+      isNewEvent = true;
     }
   } catch (inboxEx) {
     console.error('[Webhook] Inbox error:', inboxEx.message);
     return json({ error: 'Failed to record event' }, 500);
   }
 
-  // ─── STEP 3: Acknowledge receipt immediately ─────────────────────
-  // Return 200 to Stripe NOW to prevent timeout retries.
-  // Fulfilment runs below; if it fails, the event is marked 'failed'
-  // in the inbox and can be retried.
+  if (!isNewEvent) {
+    return json({ ok: true, duplicate: true, eventId });
+  }
+
+  // ─── STEP 3: Atomic claim — set status='processing' ──────────────
+  // Only claim if status is 'received' or 'failed' (not 'completed' or 'processing')
+  const { data: claimed, error: claimErr } = await sr.from('webhook_event_inbox')
+    .update({ status: 'processing', processed_at: new Date().toISOString() })
+    .eq('event_id', eventId)
+    .in('status', ['received', 'failed'])
+    .select('event_id')
+    .maybeSingle();
+
+  if (claimErr || !claimed) {
+    // Another worker claimed it, or it was completed — skip
+    console.log(`[Webhook] Event ${eventId} could not be claimed (claimErr: ${claimErr?.message || 'already claimed/completed'})`);
+    return json({ ok: true, duplicate: true, eventId });
+  }
 
   // ─── STEP 4: Process event type ─────────────────────────────────
   if (eventType !== 'checkout.session.completed') {
@@ -115,7 +173,16 @@ exports.handler = async (event) => {
     return json({ ok: true, skipped: 'not_paid', payment_status: session.payment_status, eventId });
   }
 
+  // Verify session metadata has required fields
   const meta = session.metadata || {};
+  if (!meta.guideId || !meta.routeName) {
+    await sr.from('webhook_event_inbox')
+      .update({ status: 'failed', error_message: 'Missing required metadata (guideId, routeName)', processed_at: new Date().toISOString() })
+      .eq('event_id', eventId);
+    console.error(`[Webhook] Session ${sessionId} missing required metadata`);
+    return json({ ok: false, error: 'Missing required metadata', eventId }, 400);
+  }
+
   const fulfilmentErrors = [];
 
   // ─── 5a. Persist booking confirmation (ON CONFLICT DO NOTHING) ───
@@ -141,7 +208,7 @@ exports.handler = async (event) => {
       disclosure_version: meta.disclosureVersion || null,
     });
     if (bookingErr) {
-      if (bookingErr.code !== '23505') { // Not unique violation
+      if (bookingErr.code !== '23505') {
         console.error('[Webhook] booking_confirmations insert error:', bookingErr.message);
         fulfilmentErrors.push('booking_confirmation: ' + bookingErr.message);
       }
@@ -174,7 +241,7 @@ exports.handler = async (event) => {
         client_accepted_at: meta.serverAcceptedAt || new Date().toISOString(),
       });
       if (termsErr) {
-        if (termsErr.code !== '23505') { // Not unique violation
+        if (termsErr.code !== '23505') {
           console.error('[Webhook] terms_acceptance insert error:', termsErr.message);
           fulfilmentErrors.push('terms_acceptance: ' + termsErr.message);
         }
@@ -306,20 +373,20 @@ exports.handler = async (event) => {
     await sr.from('webhook_event_inbox')
       .update({
         status: 'failed',
+        retryable: true,
         error_message: fulfilmentErrors.join('; '),
         processed_at: new Date().toISOString(),
       })
       .eq('event_id', eventId);
 
     console.error(`[Webhook] Fulfilment partial failure for ${eventId}:`, fulfilmentErrors);
-    // Still return 200 to Stripe to prevent infinite retries for partial failures.
-    // The event is marked 'failed' in the inbox for manual review/retry.
     return json({ ok: true, partial_failure: true, errors: fulfilmentErrors, eventId });
   }
 
   await sr.from('webhook_event_inbox')
     .update({
       status: 'completed',
+      retryable: false,
       processed_at: new Date().toISOString(),
     })
     .eq('event_id', eventId);
@@ -329,9 +396,19 @@ exports.handler = async (event) => {
 };
 
 // ─── Retry Policy (documented) ───────────────────────────────────
+// State machine:
+//   received → processing → completed
+//                      └→ failed (retryable=true)
+//   On retry delivery:
+//     - completed → skip (return 200)
+//     - processing (recent) → skip (another worker active)
+//     - processing (stale >5min) → reprocess
+//     - failed → reprocess (Stripe Dashboard resend)
+//     - received (stale >5min) → reprocess
 // 1. Stripe retries: exponential backoff, up to 3 days, ~15 attempts
 // 2. Duplicate protection: webhook_event_inbox.event_id UNIQUE prevents reprocessing
-// 3. Partial failures: recorded as status='failed' in inbox with error_message
-// 4. Manual retry: via Stripe Dashboard webhook resend, or direct RPC calls
-// 5. Alerting: console.error captured by Netlify function logs + any configured alerts
-// 6. Monitoring: query webhook_event_inbox WHERE status IN ('failed', 'received')
+// 3. Partial failures: recorded as status='failed' + retryable=true in inbox
+// 4. Manual retry: via Stripe Dashboard webhook resend
+// 5. Concurrent safety: atomic claim (UPDATE WHERE status IN ('received','failed'))
+// 6. Alerting: console.error captured by Netlify function logs + any configured alerts
+// 7. Monitoring: query webhook_event_inbox WHERE retryable = true
