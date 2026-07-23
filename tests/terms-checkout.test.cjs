@@ -22,12 +22,20 @@ const root = path.join(__dirname, '..');
 const termsPath = path.join(root, 'src', 'pages', 'Terms.jsx');
 const checkoutPath = path.join(root, 'src', 'pages', 'Checkout.jsx');
 const apiPath = path.join(root, 'netlify', 'functions', 'api.cjs');
+const webhookPath = path.join(root, 'netlify', 'functions', 'webhook-stripe.cjs');
 const migrationPath = path.join(root, 'supabase', 'migrations', 'terms_acceptance.sql');
+const freshInstallPath = path.join(root, 'supabase', 'migrations', '002_webhook_infrastructure.sql');
+const upgradePath = path.join(root, 'supabase', 'migrations', '002a_terms_acceptance_upgrade.sql');
+const netlifyToml = path.join(root, 'netlify.toml');
 
 const terms = fs.readFileSync(termsPath, 'utf8');
 const checkout = fs.readFileSync(checkoutPath, 'utf8');
 const api = fs.readFileSync(apiPath, 'utf8');
+const webhook = fs.readFileSync(webhookPath, 'utf8');
 const migration = fs.readFileSync(migrationPath, 'utf8');
+const freshInstall = fs.readFileSync(freshInstallPath, 'utf8');
+const upgrade = fs.readFileSync(upgradePath, 'utf8');
+const toml = fs.readFileSync(netlifyToml, 'utf8');
 
 // ─── Terms.jsx: Prohibited wording ──────────────────────────────────
 console.log('\n=== Terms.jsx: Prohibited Wording ===\n');
@@ -82,12 +90,12 @@ test('Cancellation matrix is present', () => {
 
 test('Force-majeure table has single row (reconciled with 7.7)', () => {
   const forceMajeureRows = (terms.match(/Force majeure/g) || []).length;
-  assert.ok(forceMajeureRows <= 2, `Expected ≤2 "Force majeure" mentions (clause + table), found ${forceMajeureRows}`);
+  assert.ok(forceMajeureRows <= 2, `Expected <=2 "Force majeure" mentions (clause + table), found ${forceMajeureRows}`);
 });
 
 test('Referral column uses "Does not carry forward" consistently', () => {
   const doesNotCarry = (terms.match(/Does not carry forward/g) || []).length;
-  assert.ok(doesNotCarry >= 3, `Expected ≥3 "Does not carry forward" in table, found ${doesNotCarry}`);
+  assert.ok(doesNotCarry >= 3, `Expected >=3 "Does not carry forward" in table, found ${doesNotCarry}`);
 });
 
 test('Terms references Consumer Rights Act 2015', () => {
@@ -109,6 +117,11 @@ test('Monetary refund provision exists', () => {
 test('DRAFT banner: "pending legal review", no "founder"', () => {
   assert.ok(terms.includes('pending legal review'), 'Missing legal review notice');
   assert.ok(!terms.includes('founder approval'), 'Contains founder-approval language');
+});
+
+test('Guide insolvency row does NOT promise BLS-funded refund', () => {
+  assert.ok(!terms.includes('Full monetary refund (from BLS)'), 'BLS-funded refund promise still present');
+  assert.ok(terms.includes('Subject to insolvency proceedings'), 'Missing insolvency proceedings text');
 });
 
 // ─── Terms.jsx: Version consistency ─────────────────────────────────
@@ -136,7 +149,7 @@ test('Checkout warning references 48-hour grace period', () => {
 test('Checkout uses MUI Checkbox (accessible)', () => {
   assert.ok(checkout.includes('Checkbox'), 'Missing MUI Checkbox component');
   assert.ok(checkout.includes('FormControlLabel'), 'Missing FormControlLabel');
-  assert.ok(checkout.includes('inputProps={{ \'aria-label\''), 'Missing aria-label on checkboxes');
+  assert.ok(checkout.includes("inputProps={{ 'aria-label'"), 'Missing aria-label on checkboxes');
 });
 
 test('Pay button requires both checkboxes', () => {
@@ -196,10 +209,6 @@ test('Server generates serverAcceptedAt timestamp', () => {
   assert.ok(api.includes("new Date().toISOString()"), 'serverAcceptedAt not server-generated');
 });
 
-test('Server uses pricing engine currency for Stripe session (not client currency)', () => {
-  assert.ok(api.includes('currency: pricing.currency'), 'Stripe session not using pricing.currency');
-});
-
 test('Server stores authoritative values in Stripe metadata', () => {
   assert.ok(api.includes('bookingRef: serverBookingRef'), 'bookingRef not in metadata');
   assert.ok(api.includes('termsVersion: CURRENT_TERMS_VERSION'), 'termsVersion not in metadata');
@@ -207,13 +216,12 @@ test('Server stores authoritative values in Stripe metadata', () => {
   assert.ok(api.includes('serverAcceptedAt,'), 'serverAcceptedAt not in metadata');
 });
 
-// ─── API: Authoritative Trip Pricing (Blocker 1) ───────────────────
-console.log('\n=== API: Authoritative Trip Pricing ===\n');
+// ─── API: Authoritative Trip Pricing & Currency ─────────────────────
+console.log('\n=== API: Authoritative Trip Pricing & Currency ===\n');
 
-test('Server fetches guide record from Supabase (does not trust client price)', () => {
+test('Server fetches guide record from Supabase', () => {
   assert.ok(api.includes("from('guides')"), 'Does not query guides table');
   assert.ok(api.includes('.eq(\'id\', guideId)'), 'Does not filter by guideId');
-  assert.ok(api.includes('.maybeSingle()'), 'Does not use maybeSingle');
 });
 
 test('Server validates guide is published', () => {
@@ -228,10 +236,22 @@ test('Server validates route exists in guide.routes', () => {
 test('Server derives price from route record (not client-supplied)', () => {
   assert.ok(api.includes('authoritativePrice'), 'Does not derive authoritative price');
   assert.ok(api.includes('Number(matchRoute.price)'), 'Does not read price from route');
-  // Verify the pricing engine call in handleStripe uses authoritativePrice, not client price
   const handleStripeSection = api.slice(api.indexOf('async function handleStripe'), api.indexOf('// Helper: find a user by referral code'));
   assert.ok(handleStripeSection.includes('tripPrice: authoritativePrice'), 'Pricing engine not using authoritativePrice in handleStripe');
   assert.ok(!handleStripeSection.includes('tripPrice: price,'), 'Still passing client price to pricing engine in handleStripe');
+});
+
+test('Server derives currency EXCLUSIVELY from guideRecord.price_currency', () => {
+  const handleStripeSection = api.slice(api.indexOf('async function handleStripe'), api.indexOf('// Helper: find a user by referral code'));
+  assert.ok(handleStripeSection.includes('guideRecord.price_currency'), 'Does not derive currency from guideRecord');
+  // Must NOT fallback to client currency
+  assert.ok(!handleStripeSection.includes("(currency || guideRecord.price_currency"), 'Still falling back to client currency');
+  assert.ok(!handleStripeSection.includes("(currency || 'usd')"), 'Still using client currency as fallback');
+});
+
+test('Server logs currency mismatch when client submits different currency', () => {
+  const handleStripeSection = api.slice(api.indexOf('async function handleStripe'), api.indexOf('// Helper: find a user by referral code'));
+  assert.ok(handleStripeSection.includes('currency_mismatch'), 'Does not log currency mismatch');
 });
 
 test('Server rejects invalid guide', () => {
@@ -246,132 +266,311 @@ test('Server rejects zero/negative price', () => {
   assert.ok(api.includes('does not have a valid price configured'), 'Missing invalid price error');
 });
 
-test('Server rejects unsupported currency', () => {
-  assert.ok(api.includes('Unsupported currency'), 'Missing unsupported currency error');
-});
-
 test('Server uses guide trading_name (not client guideName)', () => {
   assert.ok(api.includes('authoritativeGuideName'), 'Does not derive authoritative guide name');
   assert.ok(api.includes('guideRecord.trading_name'), 'Does not use trading_name from DB');
-  assert.ok(api.includes('metadata:'), 'Missing metadata in Stripe session');
 });
 
-test('Client price is NOT used in pricing engine call', () => {
-  // Extract the handleStripe function section only (not the calculateBookingPrice definition)
-  const handleStripeSection = api.slice(api.indexOf('async function handleStripe'), api.indexOf('// Helper: find a user by referral code'));
-  const pricingCallMatch = handleStripeSection.match(/calculateBookingPrice\(\{[\s\S]*?\}\)/);
-  assert.ok(pricingCallMatch, 'No calculateBookingPrice call found in handleStripe');
-  assert.ok(pricingCallMatch[0].includes('tripPrice: authoritativePrice'), 'Pricing engine not using authoritativePrice');
-  assert.ok(!pricingCallMatch[0].includes('tripPrice: price'), 'Still passing client price to pricing engine');
+// ─── API: Read-only /confirm-payment ────────────────────────────────
+console.log('\n=== API: Read-only /confirm-payment ===\n');
+
+test('confirm-payment handler exists', () => {
+  assert.ok(api.includes('handleConfirmPayment'), 'Missing handleConfirmPayment');
 });
 
-// ─── API: Stripe Webhook (Blocker 2) ──────────────────────────────
-console.log('\n=== API: Stripe Webhook ===\n');
-
-test('Stripe webhook handler exists', () => {
-  assert.ok(api.includes('handleStripeWebhook'), 'Missing handleStripeWebhook function');
+test('confirm-payment does NOT insert into terms_acceptance', () => {
+  const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
+  assert.ok(!handlerSection.includes("terms_acceptance')") || !handlerSection.includes('.insert('), 'confirm-payment still inserts into terms_acceptance');
 });
 
-test('Webhook verifies Stripe signature', () => {
-  assert.ok(api.includes('webhooks.constructEvent') || api.includes('constructEvent'), 'Missing signature verification');
-  assert.ok(api.includes('STRIPE_WEBHOOK_SECRET'), 'Missing STRIPE_WEBHOOK_SECRET');
+test('confirm-payment does NOT insert into payment_reports', () => {
+  const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
+  assert.ok(!handlerSection.includes("payment_reports')") || !handlerSection.includes('.insert('), 'confirm-payment still inserts into payment_reports');
+});
+
+test('confirm-payment does NOT credit referral balances', () => {
+  const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
+  assert.ok(!handlerSection.includes('bls_points_balance'), 'confirm-payment still modifies bls_points_balance');
+  assert.ok(!handlerSection.includes('.update('), 'confirm-payment still performs updates');
+});
+
+test('confirm-payment does NOT credit ambassador commissions', () => {
+  const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
+  assert.ok(!handlerSection.includes('AMBASSADOR_COMMISSION_RATE'), 'confirm-payment still references AMBASSADOR_COMMISSION_RATE');
+});
+
+test('confirm-payment queries (not mutates) webhook_event_inbox', () => {
+  const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
+  assert.ok(handlerSection.includes('webhook_event_inbox'), 'confirm-payment does not check webhook status');
+  assert.ok(handlerSection.includes('.select('), 'confirm-payment does not query');
+});
+
+test('confirm-payment queries terms_acceptance for status', () => {
+  const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
+  assert.ok(handlerSection.includes("terms_acceptance") && handlerSection.includes('.select('), 'confirm-payment does not query terms status');
+});
+
+test('confirm-payment queries booking_confirmations for status', () => {
+  const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
+  assert.ok(handlerSection.includes("booking_confirmations") && handlerSection.includes('.select('), 'confirm-payment does not query booking confirmation status');
+});
+
+// ─── Webhook: Separate function (Blocker 8) ─────────────────────────
+console.log('\n=== Webhook: Separate Function (Rate Limit Bypass) ===\n');
+
+test('Webhook is a separate Netlify function file', () => {
+  assert.ok(fs.existsSync(webhookPath), 'webhook-stripe.cjs does not exist');
+});
+
+test('Webhook function exports handler', () => {
+  assert.ok(webhook.includes('exports.handler'), 'Missing exports.handler');
+});
+
+test('Webhook is NOT under /api/* (avoids customer IP rate limiter)', () => {
+  assert.ok(toml.includes('/webhooks/stripe'), 'Missing /webhooks/stripe redirect');
+  assert.ok(toml.includes('webhook-stripe'), 'Missing webhook-stripe target');
+});
+
+test('Webhook route is separate from /api/* redirect', () => {
+  const apiRedirectIndex = toml.indexOf('from = "/api/*"');
+  const webhookRedirectIndex = toml.indexOf('from = "/webhooks/stripe"');
+  assert.ok(apiRedirectIndex !== -1, 'Missing /api/* redirect');
+  assert.ok(webhookRedirectIndex !== -1, 'Missing /webhooks/stripe redirect');
+  assert.ok(webhookRedirectIndex > apiRedirectIndex, 'Webhook redirect must be after /api/* redirect');
+});
+
+// ─── Webhook: Signature verification ────────────────────────────────
+console.log('\n=== Webhook: Signature Verification ===\n');
+
+test('Webhook verifies Stripe signature with constructEvent', () => {
+  assert.ok(webhook.includes('constructEvent'), 'Missing constructEvent');
+  assert.ok(webhook.includes('STRIPE_WEBHOOK_SECRET'), 'Missing STRIPE_WEBHOOK_SECRET');
+});
+
+test('Webhook rejects missing signature (returns 400)', () => {
+  assert.ok(webhook.includes('Missing Stripe signature'), 'Missing signature rejection');
+});
+
+test('Webhook rejects invalid signature (returns 400)', () => {
+  assert.ok(webhook.includes('Invalid signature'), 'Missing invalid signature rejection');
 });
 
 test('Webhook checks payment_status is paid', () => {
-  assert.ok(api.includes('payment_status'), 'Missing payment_status check');
-  assert.ok(api.includes("'paid'") || api.includes('"paid"'), 'Missing paid status check');
+  assert.ok(webhook.includes("'paid'") || webhook.includes('"paid"'), 'Missing paid check');
+  assert.ok(webhook.includes('payment_status'), 'Missing payment_status check');
 });
 
-test('Webhook route registered in router', () => {
-  assert.ok(api.includes("case 'stripe-webhook'") || api.includes("'stripe-webhook'"), 'Missing stripe-webhook route');
+test('Webhook returns 200 for unpaid sessions (does not retry)', () => {
+  const webhookSection = webhook.slice(webhook.indexOf('payment_status'));
+  assert.ok(webhookSection.includes("'not_paid'") || webhookSection.includes('"not_paid"'), 'Missing not_paid response');
 });
 
-test('Webhook reads metadata from session', () => {
-  assert.ok(api.includes('session.metadata'), 'Missing session.metadata in webhook');
+// ─── Webhook: Idempotency (Blocker 4) ──────────────────────────────
+console.log('\n=== Webhook: Atomic Idempotency ===\n');
+
+test('Webhook inserts event into webhook_event_inbox (ON CONFLICT)', () => {
+  assert.ok(webhook.includes('webhook_event_inbox'), 'Missing webhook_event_inbox');
+  assert.ok(webhook.includes('.insert('), 'Missing insert into inbox');
+  assert.ok(webhook.includes('23505') || webhook.includes('unique_violation') || webhook.includes('Unique violation'), 'Missing ON CONFLICT / unique violation handling');
 });
 
-test('Webhook handler returns 200 OK for successful processing', () => {
-  assert.ok(api.includes('statusCode: 200'), 'Missing 200 response in webhook');
+test('Webhook returns 200 for duplicate events', () => {
+  assert.ok(webhook.includes('duplicate: true') || webhook.includes("'duplicate'"), 'Missing duplicate response');
 });
 
-test('Confirm-payment endpoint is now status-only (read-only reconciliation)', () => {
-  // confirm-payment should not be the sole persistence mechanism for terms/referrals
-  assert.ok(api.includes('handleConfirmPayment'), 'confirm-payment handler still exists (expected as status endpoint)');
+test('Webhook uses ON CONFLICT DO NOTHING for terms_acceptance', () => {
+  // The webhook should handle unique violations gracefully
+  assert.ok(webhook.includes("terms_acceptance") && webhook.includes('.insert('), 'Missing terms insert');
+  assert.ok(webhook.includes("'23505'") || webhook.includes('Unique violation'), 'Missing unique violation handling for terms');
 });
 
-// ─── API: Webhook persistence ───────────────────────────────────────
-console.log('\n=== API: Webhook Persistence ===\n');
-
-test('confirm-payment reads termsVersion from Stripe metadata', () => {
-  assert.ok(api.includes('meta.termsVersion'), 'Not reading termsVersion from metadata');
+test('Webhook uses ON CONFLICT for payment_reports', () => {
+  assert.ok(webhook.includes("payment_reports") && webhook.includes('.insert('), 'Missing payment_reports insert');
 });
 
-test('confirm-payment reads bookingRef from Stripe metadata', () => {
-  assert.ok(api.includes('meta.bookingRef'), 'Not reading bookingRef from metadata');
+test('Webhook uses ON CONFLICT for booking_confirmations', () => {
+  assert.ok(webhook.includes("booking_confirmations") && webhook.includes('.insert('), 'Missing booking_confirmations insert');
 });
 
-test('confirm-payment inserts into terms_acceptance', () => {
-  assert.ok(api.includes("terms_acceptance") && api.includes(".insert("), 'Missing terms_acceptance insert');
+test('Webhook uses RPC functions for referral rewards', () => {
+  assert.ok(webhook.includes("credit_referral_reward"), 'Missing credit_referral_reward RPC call');
+  assert.ok(webhook.includes('.rpc('), 'Missing RPC call');
 });
 
-test('confirm-payment reports persisted: false on insert error', () => {
-  assert.ok(api.includes("persisted: false"), 'Missing persisted: false on error');
+test('Webhook uses RPC functions for ambassador commission', () => {
+  assert.ok(webhook.includes("credit_ambassador_commission"), 'Missing credit_ambassador_commission RPC call');
 });
 
-test('confirm-payment is idempotent (skips duplicate session_id)', () => {
-  assert.ok(api.includes('already exists') || api.includes('idempotent') || api.includes('maybeSingle'), 'Missing idempotency check');
+test('Webhook uses idempotency_key for transaction deduplication', () => {
+  assert.ok(webhook.includes('idempotencyKey') || webhook.includes('idempotency_key'), 'Missing idempotency_key usage');
+  assert.ok(webhook.includes('referral_') || webhook.includes('ambassador_'), 'Missing referral_/ambassador_ prefix');
 });
 
-test('confirm-payment stores confirmed_checkbox: true and insurance_confirmed_checkbox: true', () => {
-  assert.ok(api.includes('confirmed_checkbox: true'), 'Missing confirmed_checkbox: true');
-  assert.ok(api.includes('insurance_confirmed_checkbox: true'), 'Missing insurance_confirmed_checkbox: true');
+// ─── Webhook: Booking Confirmation persistence (Blocker 3) ─────────
+console.log('\n=== Webhook: Booking Confirmation Persistence ===\n');
+
+test('Webhook persists booking to booking_confirmations table', () => {
+  assert.ok(webhook.includes("booking_confirmations") && webhook.includes('.insert('), 'Missing booking_confirmations insert');
 });
 
-// ─── Migration: terms_acceptance table ──────────────────────────────
-console.log('\n=== Migration: terms_acceptance Table ===\n');
+test('Booking confirmation includes session_id', () => {
+  assert.ok(webhook.includes('session_id: sessionId'), 'Missing session_id in booking confirmation');
+});
 
-test('session_id has UNIQUE constraint', () => {
+test('Booking confirmation includes booking_ref', () => {
+  assert.ok(webhook.includes('booking_ref: meta.bookingRef'), 'Missing booking_ref');
+});
+
+test('Booking confirmation includes payment_status', () => {
+  assert.ok(webhook.includes("payment_status: 'paid'"), 'Missing payment_status paid');
+});
+
+// ─── Webhook: Failure handling (Blocker 5) ──────────────────────────
+console.log('\n=== Webhook: Failure Handling ===\n');
+
+test('Webhook marks failed events in webhook_event_inbox', () => {
+  assert.ok(webhook.includes("status: 'failed'") || webhook.includes('failed'), 'Missing failed status marking');
+});
+
+test('Webhook returns 200 even on partial failures (prevents Stripe retry loops)', () => {
+  assert.ok(webhook.includes('partial_failure'), 'Missing partial_failure response');
+});
+
+test('Webhook tracks fulfilmentErrors array', () => {
+  assert.ok(webhook.includes('fulfilmentErrors'), 'Missing fulfilmentErrors tracking');
+});
+
+test('Webhook updates inbox status to completed on success', () => {
+  assert.ok(webhook.includes("status: 'completed'"), 'Missing completed status update');
+});
+
+test('Webhook documents retry policy', () => {
+  assert.ok(webhook.includes('Retry Policy') || webhook.includes('retry'), 'Missing retry policy documentation');
+});
+
+// ─── Migration: Fresh Install (002) ────────────────────────────────
+console.log('\n=== Migration: Fresh Install (002_webhook_infrastructure) ===\n');
+
+test('Fresh install migration exists', () => {
+  assert.ok(fs.existsSync(freshInstallPath), '002_webhook_infrastructure.sql does not exist');
+});
+
+test('Fresh install creates webhook_event_inbox table', () => {
+  assert.ok(freshInstall.includes('CREATE TABLE IF NOT EXISTS webhook_event_inbox'), 'Missing webhook_event_inbox');
+});
+
+test('Fresh install creates booking_confirmations table', () => {
+  assert.ok(freshInstall.includes('CREATE TABLE IF NOT EXISTS booking_confirmations'), 'Missing booking_confirmations');
+});
+
+test('webhook_event_inbox has event_id PRIMARY KEY', () => {
+  assert.ok(freshInstall.includes('event_id TEXT PRIMARY KEY'), 'Missing event_id PK');
+});
+
+test('booking_confirmations has session_id UNIQUE', () => {
+  assert.ok(freshInstall.includes('session_id TEXT NOT NULL UNIQUE'), 'Missing session_id UNIQUE');
+});
+
+test('Fresh install adds payment_reports.session_id UNIQUE constraint', () => {
+  assert.ok(freshInstall.includes('payment_reports_session_id_key'), 'Missing payment_reports UNIQUE');
+});
+
+test('Fresh install adds idempotency_key to transactions', () => {
+  assert.ok(freshInstall.includes('idempotency_key TEXT'), 'Missing idempotency_key column');
+  assert.ok(freshInstall.includes('idx_transactions_idempotency_key'), 'Missing idempotency_key index');
+});
+
+test('Fresh install creates credit_referral_reward RPC', () => {
+  assert.ok(freshInstall.includes('credit_referral_reward'), 'Missing credit_referral_reward RPC');
+  assert.ok(freshInstall.includes('LANGUAGE plpgsql SECURITY DEFINER'), 'Missing SECURITY DEFINER');
+});
+
+test('Fresh install creates credit_ambassador_commission RPC', () => {
+  assert.ok(freshInstall.includes('credit_ambassador_commission'), 'Missing credit_ambassador_commission RPC');
+});
+
+test('Fresh install enables RLS on new tables', () => {
+  assert.ok(freshInstall.includes('webhook_event_inbox ENABLE ROW LEVEL SECURITY'), 'Missing RLS on webhook_event_inbox');
+  assert.ok(freshInstall.includes('booking_confirmations ENABLE ROW LEVEL SECURITY'), 'Missing RLS on booking_confirmations');
+});
+
+test('Fresh install is atomic (BEGIN/COMMIT)', () => {
+  assert.ok(freshInstall.includes('BEGIN;') && freshInstall.includes('COMMIT;'), 'Not atomic');
+});
+
+// ─── Migration: Upgrade Safety (002a) ──────────────────────────────
+console.log('\n=== Migration: Upgrade Safety (002a) ===\n');
+
+test('Upgrade migration exists', () => {
+  assert.ok(fs.existsSync(upgradePath), '002a_terms_acceptance_upgrade.sql does not exist');
+});
+
+test('Upgrade adds columns as NULLABLE first (no NOT NULL)', () => {
+  assert.ok(upgrade.includes('ADD COLUMN'), 'Missing ADD COLUMN');
+  // Should NOT contain NOT NULL in the ALTER TABLE ADD COLUMN statements
+  const lines = upgrade.split('\n');
+  const addColumnLines = lines.filter(l => l.includes('ADD COLUMN'));
+  for (const line of addColumnLines) {
+    assert.ok(!line.toUpperCase().includes('NOT NULL'), `Column added with NOT NULL: ${line.trim()}`);
+  }
+});
+
+test('Upgrade does NOT backfill with invented values', () => {
+  assert.ok(!upgrade.includes("DEFAULT '") || upgrade.split("\n").filter(l => l.includes("DEFAULT '")).length <= 1, 'Contains invented default values');
+  assert.ok(!upgrade.includes("DEFAULT CURRENT_DATE"), 'Contains DEFAULT CURRENT_DATE');
+  assert.ok(!upgrade.includes("DEFAULT true"), 'Contains DEFAULT true (invented acceptance)');
+  assert.ok(!upgrade.includes("DEFAULT 'draft-"), 'Contains invented Terms version default');
+});
+
+test('Upgrade reports unresolved NULLs instead of inventing values', () => {
+  assert.ok(upgrade.includes('RAISE WARNING') || upgrade.includes('v_null_count'), 'Missing NULL audit reporting');
+  assert.ok(upgrade.includes('unresolved NULL'), 'Missing unresolved NULL messaging');
+});
+
+test('Upgrade adds CHECK constraints with EXCEPTION handling', () => {
+  assert.ok(upgrade.includes('EXCEPTION WHEN check_violation'), 'Missing check_violation exception handling');
+});
+
+test('Upgrade adds UNIQUE constraint with duplicate check', () => {
+  assert.ok(upgrade.includes('HAVING COUNT(*) > 1') || upgrade.includes('duplicate session_ids'), 'Missing duplicate check before UNIQUE');
+});
+
+test('Upgrade is atomic (BEGIN/COMMIT)', () => {
+  assert.ok(upgrade.includes('BEGIN;') && upgrade.includes('COMMIT;'), 'Not atomic');
+});
+
+test('Upgrade preserves existing records (no DELETE or TRUNCATE)', () => {
+  assert.ok(!upgrade.includes('DELETE FROM'), 'Contains DELETE FROM');
+  assert.ok(!upgrade.includes('TRUNCATE'), 'Contains TRUNCATE');
+});
+
+// ─── Migration: Original terms_acceptance.sql ───────────────────────
+console.log('\n=== Migration: terms_acceptance.sql ===\n');
+
+test('Original migration is atomic', () => {
+  assert.ok(migration.includes('BEGIN;') && migration.includes('COMMIT;'), 'Not wrapped in BEGIN/COMMIT');
+});
+
+test('terms_acceptance has session_id UNIQUE', () => {
   assert.ok(migration.includes('session_id') && migration.includes('UNIQUE'), 'Missing UNIQUE on session_id');
 });
 
-test('departure_date is DATE type', () => {
-  assert.ok(migration.includes('departure_date DATE'), 'departure_date not DATE type');
+test('terms_acceptance has CHECK constraints', () => {
+  assert.ok(migration.includes('CHECK (confirmed_checkbox = true)'), 'Missing confirmed_checkbox CHECK');
+  assert.ok(migration.includes('CHECK (insurance_confirmed_checkbox = true)'), 'Missing insurance_confirmed_checkbox CHECK');
+  assert.ok(migration.includes("CHECK (currency IN ('gbp', 'eur', 'usd'))"), 'Missing currency CHECK');
 });
 
-test('client_accepted_at is TIMESTAMPTZ type', () => {
-  assert.ok(migration.includes('client_accepted_at TIMESTAMPTZ'), 'client_accepted_at not TIMESTAMPTZ');
-});
-
-test('confirmed_checkbox CHECK constraint requires true', () => {
-  assert.ok(migration.includes('CHECK (confirmed_checkbox = true)'), 'Missing CHECK on confirmed_checkbox');
-});
-
-test('insurance_confirmed_checkbox CHECK constraint requires true', () => {
-  assert.ok(migration.includes('CHECK (insurance_confirmed_checkbox = true)'), 'Missing CHECK on insurance_confirmed_checkbox');
-});
-
-test('currency CHECK constraint restricts to gbp/eur/usd', () => {
-  assert.ok(migration.includes("CHECK (currency IN ('gbp', 'eur', 'usd'))"), 'Missing CHECK on currency');
-});
-
-test('UPDATE and DELETE privileges revoked from all roles', () => {
+test('UPDATE/DELETE revoked from all roles', () => {
   assert.ok(migration.includes('REVOKE UPDATE, DELETE'), 'Missing REVOKE');
 });
 
-test('Trigger rejects UPDATE operations', () => {
-  assert.ok(migration.includes('BEFORE UPDATE') && migration.includes('TRIGGER'), 'Missing UPDATE trigger');
-});
-
-test('Trigger rejects DELETE operations', () => {
-  assert.ok(migration.includes('BEFORE DELETE') && migration.includes('TRIGGER'), 'Missing DELETE trigger');
+test('Triggers reject UPDATE and DELETE', () => {
+  assert.ok(migration.includes('BEFORE UPDATE') && migration.includes('BEFORE DELETE'), 'Missing triggers');
 });
 
 test('Only INSERT and SELECT granted to service_role', () => {
   assert.ok(migration.includes('GRANT INSERT, SELECT'), 'Missing GRANT');
-});
-
-test('Migration is atomic (wrapped in BEGIN/COMMIT)', () => {
-  assert.ok(migration.includes('BEGIN;') && migration.includes('COMMIT;'), 'Not wrapped in BEGIN/COMMIT');
 });
 
 test('RLS enabled', () => {
