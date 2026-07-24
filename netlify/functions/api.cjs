@@ -428,73 +428,28 @@ async function handleConfirmPayment(event) {
     });
 
     const results = {
-      sessionId,
       paymentStatus: session.payment_status,
       sessionStatus: session.status,
       bookingRef: meta.bookingRef || null,
     };
 
-    // Check webhook event inbox for processing status
-    try {
-      const { data: inboxEvent } = await sr.from('webhook_event_inbox')
-        .select('status, error_message, processed_at, received_at')
-        .eq('stripe_session_id', sessionId)
-        .maybeSingle();
-      if (inboxEvent) {
-        results.webhookStatus = inboxEvent.status;
-        results.webhookProcessedAt = inboxEvent.processed_at;
-        results.webhookError = inboxEvent.error_message;
-      } else {
-        results.webhookStatus = 'not_received';
-      }
-    } catch { results.webhookStatus = 'unknown'; }
-
     // Check terms acceptance persistence
     try {
       const { data: termsRecord } = await sr.from('terms_acceptance')
-        .select('id, terms_version, created_at')
+        .select('id')
         .eq('session_id', sessionId)
         .maybeSingle();
-      results.termsAccepted = termsRecord ? { persisted: true, termsVersion: termsRecord.terms_version, createdAt: termsRecord.created_at } : { persisted: false };
-    } catch { results.termsAccepted = { persisted: false, error: 'query_failed' }; }
+      results.termsAccepted = !!termsRecord;
+    } catch { results.termsAccepted = false; }
 
     // Check booking confirmation persistence
     try {
       const { data: bookingRecord } = await sr.from('booking_confirmations')
-        .select('id, booking_ref, created_at')
+        .select('id')
         .eq('session_id', sessionId)
         .maybeSingle();
-      results.bookingConfirmed = bookingRecord ? { persisted: true, bookingRef: bookingRecord.booking_ref, createdAt: bookingRecord.created_at } : { persisted: false };
-    } catch { results.bookingConfirmed = { persisted: false, error: 'query_failed' }; }
-
-    // Check payment report persistence
-    try {
-      const { data: paymentReport } = await sr.from('payment_reports')
-        .select('id, presentment_amount, total_stripe_fee, created_at')
-        .eq('session_id', sessionId)
-        .maybeSingle();
-      results.paymentReport = paymentReport ? { persisted: true, amount: paymentReport.presentment_amount, fee: paymentReport.total_stripe_fee, createdAt: paymentReport.created_at } : { persisted: false };
-    } catch { results.paymentReport = { persisted: false, error: 'query_failed' }; }
-
-    // Check referral reward status
-    try {
-      const idempotencyKey = `referral_${sessionId}`;
-      const { data: referralTxn } = await sr.from('transactions')
-        .select('id, amount, created_at')
-        .eq('idempotency_key', idempotencyKey)
-        .maybeSingle();
-      results.referralReward = referralTxn ? { credited: true, amount: referralTxn.amount, createdAt: referralTxn.created_at } : { credited: false };
-    } catch { results.referralReward = { credited: false, error: 'query_failed' }; }
-
-    // Check ambassador commission status
-    try {
-      const idempotencyKey = `ambassador_${sessionId}`;
-      const { data: ambTxn } = await sr.from('transactions')
-        .select('id, amount, created_at')
-        .eq('idempotency_key', idempotencyKey)
-        .maybeSingle();
-      results.ambassadorCommission = ambTxn ? { credited: true, amount: ambTxn.amount, createdAt: ambTxn.created_at } : { credited: false };
-    } catch { results.ambassadorCommission = { credited: false, error: 'query_failed' }; }
+      results.bookingConfirmed = !!bookingRecord;
+    } catch { results.bookingConfirmed = false; }
 
     return json(results);
   } catch (err) {
@@ -941,27 +896,8 @@ async function handleGuideProfile(event) {
   return json({ error: 'Method not allowed' }, 405);
 }
 
-// ─── Debug Auth ───────────────────────────────────────────────────────
-async function handleDebugAuth(event) {
-  const result = await authenticate(event);
-  if (result.statusCode) return result;
-  const { user, profile, supabase } = result;
-  const srkSet = !!(process.env.SUPABASE_SERVICE_ROLE_KEY);
-  const srkLen = process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.length : 0;
-  // Try inserting a test row using service role key (should bypass RLS)
-  const testId = 'test_' + Date.now();
-  const { data: insertTest, error: insertErr } = await supabase.from('guides').insert({ id: testId, user_id: user.id, trading_name: 'test', status: 'draft' }).select().single();
-  if (insertErr) {
-    // Also try listing existing guides
-    const { data: guides, error: listErr } = await supabase.from('guides').select('id').limit(5);
-    return json({ userId: user.id, email: user.email, profile, profErr: null, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertError: insertErr.message, listError: listErr?.message, guideCount: guides?.length });
-  }
-  await supabase.from('guides').delete().eq('id', testId);
-  return json({ userId: user.id, email: user.email, profile, profErr: null, serviceRoleKeySet: srkSet, serviceRoleKeyLen: srkLen, insertTest: 'OK' });
-}
-
 // ─── Charity Challenges ───────────────────────────────────────────────
-const { getCharity, createFundraisingPage, getFundraisingPage, simulateDonation, MOCK_MODE } = require('./charityProvider.cjs');
+const { getCharity, createFundraisingPage, getFundraisingPage, MOCK_MODE } = require('./charityProvider.cjs');
 
 // GET /api/charities?destination=kilimanjaro — fetch vetted charities for a destination
 async function handleCharities(event) {
@@ -1156,45 +1092,9 @@ async function handleSyncFundraising(event) {
   }
 }
 
-// POST /api/fundraising/simulate-donation — mock endpoint for testing donations
-async function handleSimulateDonation(event) {
-  if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  if (!MOCK_MODE) return json({ error: 'Only available in mock mode' }, 400);
-  try {
-    const { pageShortName, amount, donorName } = reqBody(event);
-    if (!pageShortName || !amount) return json({ error: 'Missing pageShortName or amount' }, 400);
+// POST /api/webhooks/charity — DISABLED until HMAC signature verification is implemented
+// Charities: 404 Not Found
 
-    const result = simulateDonation(pageShortName, parseFloat(amount), donorName || 'Anonymous');
-    if (!result) return json({ error: 'Page not found' }, 404);
-
-    // Update DB
-    const sr = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
-    await sr.from('fundraising_pages').update({
-      total_raised: result.totalRaised,
-      donor_count: result.donorCount,
-      last_synced_at: new Date().toISOString(),
-    }).eq('page_short_name', pageShortName);
-
-    return json({ ok: true, totalRaised: result.totalRaised, donorCount: result.donorCount });
-  } catch (err) {
-    return json({ error: err.message }, 500);
-  }
-}
-
-// POST /api/webhooks/charity — JustGiving webhook receiver (optional, for live updates)
-async function handleCharityWebhook(event) {
-  if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  try {
-    const body = reqBody(event);
-    console.log('[Charity Webhook] Received:', JSON.stringify(body));
-
-    // In production, validate the webhook signature here
-    // For now, just acknowledge receipt
-    return json({ ok: true });
-  } catch (err) {
-    return json({ error: err.message }, 500);
-  }
-}
 
 // ─── Posts / News ─────────────────────────────────────────────────────
 async function handlePosts(event) {
@@ -1529,8 +1429,6 @@ exports.handler = async (event) => {
   const route = parts[0] || '';
 
   switch (route) {
-    case 'debug-auth':
-      return handleDebugAuth(event);
     case 'create-checkout':
       return handleStripe(event);
     case 'validate-referral':
@@ -1552,16 +1450,13 @@ exports.handler = async (event) => {
     case 'charities':
       return handleCharities(event);
     case 'fundraising':
-      // Route sub-paths: /fundraising/my, /fundraising/create, /fundraising/sync, /fundraising/simulate-donation
+      // Route sub-paths: /fundraising/my, /fundraising/create, /fundraising/sync
       const fundPath = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);
       const fundAction = fundPath[1] || 'my';
       if (fundAction === 'create') return handleCreateFundraising(event);
       if (fundAction === 'sync') return handleSyncFundraising(event);
-      if (fundAction === 'simulate-donation') return handleSimulateDonation(event);
       return handleMyFundraising(event); // default: GET /fundraising/my
     case 'webhooks':
-      const webhookPath = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);
-      if (webhookPath[1] === 'charity') return handleCharityWebhook(event);
       return json({ error: 'Not found' }, 404);
     case 'admin':
       const adminPath = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);

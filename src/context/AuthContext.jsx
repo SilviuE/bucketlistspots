@@ -5,7 +5,7 @@ const AuthContext = createContext(null);
 
 // SECURITY: Only safe columns are loaded from the users table in the browser.
 // NEVER select referral_code, bls_points_balance, or other server-only fields.
-const SAFE_USER_COLUMNS = 'id, email, name, role, created_at';
+const SAFE_USER_COLUMNS = 'id, email, name, avatar, role, created_at';
 
 function load(key, fallback) {
   try {

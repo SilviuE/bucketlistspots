@@ -300,10 +300,15 @@ test('confirm-payment does NOT credit ambassador commissions', () => {
   assert.ok(!handlerSection.includes('AMBASSADOR_COMMISSION_RATE'), 'confirm-payment still references AMBASSADOR_COMMISSION_RATE');
 });
 
-test('confirm-payment queries (not mutates) webhook_event_inbox', () => {
+test('confirm-payment no longer exposes webhook_event_inbox details', () => {
   const handlerSection = api.slice(api.indexOf('async function handleConfirmPayment'), api.indexOf('// GET /api/rewards'));
-  assert.ok(handlerSection.includes('webhook_event_inbox'), 'confirm-payment does not check webhook status');
-  assert.ok(handlerSection.includes('.select('), 'confirm-payment does not query');
+  assert.ok(!handlerSection.includes('webhook_event_inbox'), 'confirm-payment should not query webhook_event_inbox (removed for security)');
+  assert.ok(!handlerSection.includes('webhookStatus'), 'confirm-payment should not expose webhookStatus');
+  assert.ok(!handlerSection.includes('paymentReport'), 'confirm-payment should not expose paymentReport');
+  assert.ok(!handlerSection.includes('referralReward'), 'confirm-payment should not expose referralReward');
+  assert.ok(!handlerSection.includes('ambassadorCommission'), 'confirm-payment should not expose ambassadorCommission');
+  const resultsObj = handlerSection.slice(handlerSection.indexOf('const results = {'), handlerSection.indexOf('};', handlerSection.indexOf('const results = {')) + 2);
+  assert.ok(!resultsObj.includes('sessionId'), 'confirm-payment results object should not include sessionId');
 });
 
 test('confirm-payment queries terms_acceptance for status', () => {
