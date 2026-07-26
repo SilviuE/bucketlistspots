@@ -421,7 +421,7 @@ END $block$;
 ALTER TABLE public.experiences ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE public.destinations ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
 
-RAISE NOTICE 'PART 2: is_published columns added';
+DO $block$ BEGIN RAISE NOTICE 'PART 2: is_published columns added'; END $block$;
 
 
 -- ================================================================
@@ -430,7 +430,7 @@ RAISE NOTICE 'PART 2: is_published columns added';
 UPDATE public.experiences SET is_published = true WHERE id = 'exp001';
 UPDATE public.destinations SET is_published = true WHERE name = 'Kilimanjaro';
 
-RAISE NOTICE 'PART 3: Backfill complete (exp001 + Kilimanjaro published)';
+DO $block$ BEGIN RAISE NOTICE 'PART 3: Backfill complete (exp001 + Kilimanjaro published)'; END $block$;
 
 
 -- ================================================================
@@ -666,9 +666,11 @@ END $block$;
 
 COMMIT;
 
-RAISE NOTICE '══════════════════════════════════════════';
-RAISE NOTICE 'PART 4: 003b migration applied inline';
-RAISE NOTICE '══════════════════════════════════════════';
+DO $block$ BEGIN
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'PART 4: 003b migration applied inline';
+  RAISE NOTICE '══════════════════════════════════════════';
+END $block$;
 
 
 -- ================================================================
