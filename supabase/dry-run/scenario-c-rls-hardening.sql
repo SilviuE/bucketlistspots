@@ -3,16 +3,54 @@
 -- ================================================================
 -- Run this in a DISPOSABLE Supabase project SQL Editor.
 --
--- Part 1: Production-schema setup (17 tables + RPCs)
+-- Part 1: Production-schema setup (16 tables + RPCs + 20 legacy policies)
 -- Part 2: Add is_published columns (simulates 003a)
 -- Part 3: Backfill founder-approved rows (simulates 003_backfill)
--- Part 4: Apply 003b migration inline (within a transaction)
--- Part 5: Behavioral RLS tests (28+ assertions)
+-- Part 4: Apply 003b migration inline (drop 20 → create 5 hardened)
+-- Part 5: Behavioral RLS tests (32 assertions)
 -- Part 6: Emergency recovery test
 -- Part 7: pg_proc signature audit
 --
+-- Policy allowlist (25 total):
+--   20 legacy pre-003 policies
+--    5 hardened post-003b policies
+--
+-- Idempotent: safe to run twice consecutively on the same project.
 -- DO NOT run against production.
 -- ================================================================
+
+
+-- ================================================================
+-- POLICY ALLOWLIST (25 known policies)
+-- ================================================================
+-- Legacy pre-003 (20):
+--   1.  platform_config_admin          → platform_config
+--   2.  transactions_select_own        → transactions
+--   3.  payment_reports_admin_only     → payment_reports
+--   4.  admin_manage_claims            → claims_registry
+--   5.  public_read_approved_claims    → claims_registry
+--   6.  admin_manage_testimonials      → testimonials
+--   7.  public_read_approved_testimonials → testimonials
+--   8.  Users read own fundraising pages     → fundraising_pages
+--   9.  Users create own fundraising pages   → fundraising_pages
+--  10.  Users update own fundraising pages   → fundraising_pages
+--  11.  Public can view active charities     → destination_charities
+--  12.  posts_select                   → posts
+--  13.  posts_insert                   → posts
+--  14.  posts_update                   → posts
+--  15.  posts_delete                   → posts
+--  16.  posts_select_anon              → posts
+--  17.  terms_acceptance_service_insert → terms_acceptance
+--  18.  terms_acceptance_service_select → terms_acceptance
+--  19.  webhook_inbox_service_all      → webhook_event_inbox
+--  20.  booking_conf_service_all       → booking_confirmations
+--
+-- Hardened post-003b (5):
+--  21.  users_select_own               → users
+--  22.  users_update_own_name_avatar   → users
+--  23.  guides_select_published        → guides
+--  24.  experiences_select_published   → experiences
+--  25.  destinations_select_published  → destinations
 
 
 -- ================================================================
@@ -130,7 +168,7 @@ CREATE TABLE IF NOT EXISTS public.terms_acceptance (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE OR REPLACE FUNCTION public.reject_terms_acceptance_update_delete()
-RETURNS TRIGGER AS $$ BEGIN RAISE EXCEPTION 'immutable'; RETURN NULL; END; $$ LANGUAGE plpgsql SET search_path = '';
+RETURNS TRIGGER AS $fn$ BEGIN RAISE EXCEPTION 'immutable'; RETURN NULL; END; $fn$ LANGUAGE plpgsql SET search_path = '';
 DROP TRIGGER IF EXISTS trg_reject_terms_update ON public.terms_acceptance;
 CREATE TRIGGER trg_reject_terms_update BEFORE UPDATE ON public.terms_acceptance FOR EACH ROW EXECUTE FUNCTION public.reject_terms_acceptance_update_delete();
 DROP TRIGGER IF EXISTS trg_reject_terms_delete ON public.terms_acceptance;
@@ -181,7 +219,7 @@ CREATE OR REPLACE FUNCTION public.credit_referral_reward(
   p_session_id TEXT, p_user_id UUID, p_amount NUMERIC, p_reason TEXT,
   p_referral_code TEXT, p_idempotency_key TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
-AS $$
+AS $fn$
 DECLARE v_new_balance NUMERIC; v_booking RECORD;
 BEGIN
   IF p_amount IS NULL OR p_amount <= 0 THEN RETURN jsonb_build_object('credited', false); END IF;
@@ -193,17 +231,17 @@ BEGIN
   IF v_new_balance IS NULL THEN RETURN jsonb_build_object('credited', false, 'reason', 'not_found'); END IF;
   INSERT INTO public.transactions (user_id, amount, type, reason, linked_referral_code, linked_booking_id, idempotency_key) VALUES (p_user_id, p_amount, 'credit', p_reason, p_referral_code, p_session_id, p_idempotency_key);
   RETURN jsonb_build_object('credited', true, 'newBalance', v_new_balance);
-END; $$;
+END; $fn$;
 
 CREATE OR REPLACE FUNCTION public.credit_ambassador_commission(
   p_session_id TEXT, p_ambassador_id UUID, p_amount NUMERIC, p_reason TEXT, p_idempotency_key TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
-AS $$ BEGIN RAISE EXCEPTION 'stub'; RETURN NULL; END; $$;
+AS $fn$ BEGIN RAISE EXCEPTION 'stub'; RETURN NULL; END; $fn$;
 
 CREATE OR REPLACE FUNCTION public.claim_webhook_event(
   p_event_id TEXT, p_stale_cutoff TIMESTAMPTZ
 ) RETURNS TABLE (claimed BOOLEAN, action TEXT) LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
-AS $$ BEGIN RAISE EXCEPTION 'stub'; RETURN; END; $$;
+AS $fn$ BEGIN RAISE EXCEPTION 'stub'; RETURN; END; $fn$;
 
 -- Enable RLS on all tables
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
@@ -224,7 +262,36 @@ ALTER TABLE public.claims_registry ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fundraising_pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.destination_charities ENABLE ROW LEVEL SECURITY;
 
--- Pre-003 simple policies
+-- Explicit baseline-reset: drop all 25 known policies before recreating legacy baseline.
+-- This is idempotent: works when zero, seven, twenty, or five policies exist.
+
+DROP POLICY IF EXISTS "platform_config_admin" ON public.platform_config;
+DROP POLICY IF EXISTS "transactions_select_own" ON public.transactions;
+DROP POLICY IF EXISTS "payment_reports_admin_only" ON public.payment_reports;
+DROP POLICY IF EXISTS "admin_manage_claims" ON public.claims_registry;
+DROP POLICY IF EXISTS "public_read_approved_claims" ON public.claims_registry;
+DROP POLICY IF EXISTS "admin_manage_testimonials" ON public.testimonials;
+DROP POLICY IF EXISTS "public_read_approved_testimonials" ON public.testimonials;
+DROP POLICY IF EXISTS "Users read own fundraising pages" ON public.fundraising_pages;
+DROP POLICY IF EXISTS "Users create own fundraising pages" ON public.fundraising_pages;
+DROP POLICY IF EXISTS "Users update own fundraising pages" ON public.fundraising_pages;
+DROP POLICY IF EXISTS "Public can view active charities" ON public.destination_charities;
+DROP POLICY IF EXISTS "posts_select" ON public.posts;
+DROP POLICY IF EXISTS "posts_insert" ON public.posts;
+DROP POLICY IF EXISTS "posts_update" ON public.posts;
+DROP POLICY IF EXISTS "posts_delete" ON public.posts;
+DROP POLICY IF EXISTS "posts_select_anon" ON public.posts;
+DROP POLICY IF EXISTS "terms_acceptance_service_insert" ON public.terms_acceptance;
+DROP POLICY IF EXISTS "terms_acceptance_service_select" ON public.terms_acceptance;
+DROP POLICY IF EXISTS "webhook_inbox_service_all" ON public.webhook_event_inbox;
+DROP POLICY IF EXISTS "booking_conf_service_all" ON public.booking_confirmations;
+DROP POLICY IF EXISTS "users_select_own" ON public.users;
+DROP POLICY IF EXISTS "users_update_own_name_avatar" ON public.users;
+DROP POLICY IF EXISTS "guides_select_published" ON public.guides;
+DROP POLICY IF EXISTS "experiences_select_published" ON public.experiences;
+DROP POLICY IF EXISTS "destinations_select_published" ON public.destinations;
+
+-- Create the exact 20 legacy pre-003 policies
 CREATE POLICY "platform_config_admin" ON public.platform_config FOR ALL TO service_role USING (true);
 CREATE POLICY "transactions_select_own" ON public.transactions FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "payment_reports_admin_only" ON public.payment_reports FOR ALL TO service_role USING (true);
@@ -251,7 +318,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 
--- Representative data
+-- Representative test data
 INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token)
 VALUES
   ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'alice@test.com', crypt('pass', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
@@ -298,11 +365,54 @@ INSERT INTO public.claims_registry (id, claim_key, claim_text, page, claim_type,
   ('c002', 'unverified', 'Not approved', 'home', 'ethical', 'draft', 'hidden')
 ON CONFLICT (id) DO NOTHING;
 
-DO $$ BEGIN
-  RAISE NOTICE '══════════════════════════════════════════';
-  RAISE NOTICE 'PART 1: Production schema + data complete';
-  RAISE NOTICE '══════════════════════════════════════════';
-END $$;
+-- Verify legacy baseline: exactly 20 policies with expected names
+DO $block$
+DECLARE
+  v_actual_names TEXT[];
+  v_actual_tables TEXT[];
+  v_count INT;
+  v_expected_names TEXT[] := ARRAY[
+    'platform_config_admin','transactions_select_own','payment_reports_admin_only',
+    'admin_manage_claims','public_read_approved_claims',
+    'admin_manage_testimonials','public_read_approved_testimonials',
+    'Users read own fundraising pages','Users create own fundraising pages',
+    'Users update own fundraising pages','Public can view active charities',
+    'posts_select','posts_insert','posts_update','posts_delete','posts_select_anon',
+    'terms_acceptance_service_insert','terms_acceptance_service_select',
+    'webhook_inbox_service_all','booking_conf_service_all'
+  ];
+  v_expected_tables TEXT[] := ARRAY[
+    'platform_config','transactions','payment_reports',
+    'claims_registry','claims_registry',
+    'testimonials','testimonials',
+    'fundraising_pages','fundraising_pages','fundraising_pages',
+    'destination_charities',
+    'posts','posts','posts','posts','posts',
+    'terms_acceptance','terms_acceptance',
+    'webhook_event_inbox','booking_confirmations'
+  ];
+  v_unexpected TEXT := '';
+BEGIN
+  SELECT array_agg(policyname ORDER BY policyname), array_agg(tablename ORDER BY policyname), count(*)
+    INTO v_actual_names, v_actual_tables, v_count
+  FROM pg_policies WHERE schemaname = 'public';
+
+  IF v_count != 20 THEN
+    RAISE EXCEPTION 'Legacy baseline FAIL: expected 20 policies, found %', v_count;
+  END IF;
+
+  FOR i IN 1..20 LOOP
+    IF v_actual_names[i] != v_expected_names[i] OR v_actual_tables[i] != v_expected_tables[i] THEN
+      v_unexpected := v_unexpected || format(' [%s on %s]', v_actual_names[i], v_actual_tables[i]);
+    END IF;
+  END LOOP;
+
+  IF v_unexpected != '' THEN
+    RAISE EXCEPTION 'Legacy baseline FAIL: policy mismatch:%', v_unexpected;
+  END IF;
+
+  RAISE NOTICE 'PART 1: Legacy baseline verified — exactly 20 policies with expected names and tables';
+END $block$;
 
 
 -- ================================================================
@@ -311,9 +421,7 @@ END $$;
 ALTER TABLE public.experiences ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE public.destinations ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
 
-DO $$ BEGIN
-  RAISE NOTICE 'PART 2: is_published columns added';
-END $$;
+RAISE NOTICE 'PART 2: is_published columns added';
 
 
 -- ================================================================
@@ -322,9 +430,7 @@ END $$;
 UPDATE public.experiences SET is_published = true WHERE id = 'exp001';
 UPDATE public.destinations SET is_published = true WHERE name = 'Kilimanjaro';
 
-DO $$ BEGIN
-  RAISE NOTICE 'PART 3: Backfill complete (exp001 + Kilimanjaro published)';
-END $$;
+RAISE NOTICE 'PART 3: Backfill complete (exp001 + Kilimanjaro published)';
 
 
 -- ================================================================
@@ -332,59 +438,88 @@ END $$;
 -- ================================================================
 BEGIN;
 
--- 4a. Publication abort check (two separate checks)
-DO $$ BEGIN
+-- 4a. Publication abort checks
+DO $block$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.experiences WHERE is_published = true LIMIT 1) THEN
     RAISE EXCEPTION '003b ABORT: No published experiences.';
   END IF;
   RAISE NOTICE 'Publication check passed: experiences has at least one published row.';
-END $$;
+END $block$;
 
-DO $$ BEGIN
+DO $block$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.destinations WHERE is_published = true LIMIT 1) THEN
     RAISE EXCEPTION '003b ABORT: No published destinations.';
   END IF;
   RAISE NOTICE 'Publication check passed: destinations has at least one published row.';
-END $$;
+END $block$;
 
 -- 4b. Add avatar column
-DO $$ BEGIN
+DO $block$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='users' AND column_name='avatar') THEN
     ALTER TABLE public.users ADD COLUMN avatar TEXT;
   END IF;
-END $$;
+END $block$;
 
--- 4c. Drop all policies
-DO $$
-DECLARE r RECORD;
+-- 4c. Explicit DROP of all 20 legacy policies (no dynamic DROP ALL)
+DROP POLICY IF EXISTS "platform_config_admin" ON public.platform_config;
+DROP POLICY IF EXISTS "transactions_select_own" ON public.transactions;
+DROP POLICY IF EXISTS "payment_reports_admin_only" ON public.payment_reports;
+DROP POLICY IF EXISTS "admin_manage_claims" ON public.claims_registry;
+DROP POLICY IF EXISTS "public_read_approved_claims" ON public.claims_registry;
+DROP POLICY IF EXISTS "admin_manage_testimonials" ON public.testimonials;
+DROP POLICY IF EXISTS "public_read_approved_testimonials" ON public.testimonials;
+DROP POLICY IF EXISTS "Users read own fundraising pages" ON public.fundraising_pages;
+DROP POLICY IF EXISTS "Users create own fundraising pages" ON public.fundraising_pages;
+DROP POLICY IF EXISTS "Users update own fundraising pages" ON public.fundraising_pages;
+DROP POLICY IF EXISTS "Public can view active charities" ON public.destination_charities;
+DROP POLICY IF EXISTS "posts_select" ON public.posts;
+DROP POLICY IF EXISTS "posts_insert" ON public.posts;
+DROP POLICY IF EXISTS "posts_update" ON public.posts;
+DROP POLICY IF EXISTS "posts_delete" ON public.posts;
+DROP POLICY IF EXISTS "posts_select_anon" ON public.posts;
+DROP POLICY IF EXISTS "terms_acceptance_service_insert" ON public.terms_acceptance;
+DROP POLICY IF EXISTS "terms_acceptance_service_select" ON public.terms_acceptance;
+DROP POLICY IF EXISTS "webhook_inbox_service_all" ON public.webhook_event_inbox;
+DROP POLICY IF EXISTS "booking_conf_service_all" ON public.booking_confirmations;
+
+-- Verify: exactly 0 policies on the 16 scoped tables after explicit drops
+DO $block$
+DECLARE v_count INT;
 BEGIN
-  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies WHERE schemaname='public' LOOP
-    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', r.policyname, r.tablename);
-  END LOOP;
-  RAISE NOTICE 'Dropped all existing policies';
-END $$;
+  SELECT count(*) INTO v_count FROM pg_policies WHERE schemaname = 'public';
+  IF v_count != 0 THEN
+    RAISE EXCEPTION 'Expected 0 policies after explicit drops, found %', v_count;
+  END IF;
+  RAISE NOTICE 'Verified: 0 policies after explicit legacy drops';
+END $block$;
 
 -- 4d. Revoke unused privileges
-REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM PUBLIC;
-REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM anon;
-REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM authenticated;
+DO $block$ BEGIN
+  BEGIN REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM PUBLIC;         EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM anon;           EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM authenticated;  EXCEPTION WHEN OTHERS THEN NULL; END;
+END $block$;
 
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.guide_applications      FROM anon, authenticated;
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.ambassador_applications FROM anon, authenticated;
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.posts                   FROM anon, authenticated;
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.fundraising_pages       FROM anon, authenticated;
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.testimonials            FROM anon, authenticated;
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.destination_charities   FROM anon, authenticated;
-REVOKE SELECT, INSERT, UPDATE, DELETE ON public.claims_registry         FROM anon, authenticated;
+DO $block$ BEGIN
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.guide_applications      FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.ambassador_applications FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.posts                   FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.fundraising_pages       FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.testimonials            FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.destination_charities   FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.claims_registry         FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+END $block$;
 
-REVOKE INSERT, UPDATE, DELETE ON public.platform_config        FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.transactions           FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.webhook_event_inbox    FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.booking_confirmations  FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.payment_reports        FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.terms_acceptance       FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.guides                 FROM anon, authenticated;
+DO $block$ BEGIN
+  BEGIN REVOKE INSERT, UPDATE, DELETE ON public.platform_config        FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE INSERT, UPDATE, DELETE ON public.transactions           FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE INSERT, UPDATE, DELETE ON public.webhook_event_inbox    FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE INSERT, UPDATE, DELETE ON public.booking_confirmations  FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE INSERT, UPDATE, DELETE ON public.payment_reports        FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE INSERT, UPDATE, DELETE ON public.terms_acceptance       FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE SELECT, INSERT, UPDATE, DELETE ON public.guides          FROM anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+END $block$;
 
 -- 4e. Column-level grants
 GRANT SELECT (
@@ -428,7 +563,7 @@ GRANT SELECT ON public.transactions TO authenticated;
 GRANT UPDATE (name, avatar) ON public.users TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO service_role;
 
--- 4f. RLS policies
+-- 4f. The 5 hardened RLS policies
 CREATE POLICY "users_select_own"
   ON public.users FOR SELECT TO authenticated
   USING (auth.uid() = id);
@@ -450,18 +585,16 @@ CREATE POLICY "destinations_select_published"
   ON public.destinations FOR SELECT
   USING (is_published = true);
 
--- 4g. Function EXECUTE security — revoke all, regrant approved only
-DO $$
-BEGIN
+-- 4g. Function EXECUTE security
+DO $block$ BEGIN
   BEGIN REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;         EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM anon;           EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM authenticated;  EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM service_role;   EXCEPTION WHEN OTHERS THEN NULL; END;
   RAISE NOTICE 'Revoked EXECUTE from all roles';
-END $$;
+END $block$;
 
-DO $$
-BEGIN
+DO $block$ BEGIN
   BEGIN REVOKE EXECUTE ON FUNCTION public.credit_referral_reward(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT) FROM PUBLIC; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE EXECUTE ON FUNCTION public.credit_referral_reward(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT) FROM anon; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE EXECUTE ON FUNCTION public.credit_referral_reward(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT) FROM authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
@@ -481,7 +614,7 @@ BEGIN
   BEGIN REVOKE EXECUTE ON FUNCTION public.reject_terms_acceptance_update_delete() FROM anon; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE EXECUTE ON FUNCTION public.reject_terms_acceptance_update_delete() FROM authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE EXECUTE ON FUNCTION public.reject_terms_acceptance_update_delete() FROM service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
-END $$;
+END $block$;
 
 GRANT EXECUTE ON FUNCTION public.claim_webhook_event(TEXT, TIMESTAMPTZ) TO service_role;
 GRANT EXECUTE ON FUNCTION public.credit_referral_reward(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT) TO service_role;
@@ -490,33 +623,58 @@ GRANT EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERI
 -- 4h. Default privilege hardening
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC, anon, authenticated;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated;
+DO $block$ BEGIN
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+END $block$;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated;
+-- 4i. Verify post-003b: exactly 5 hardened policies, no legacy policies remain
+DO $block$
+DECLARE
+  v_count INT;
+  v_actual_names TEXT[];
+  v_actual_tables TEXT[];
+  v_unexpected TEXT := '';
+  v_expected_names  TEXT[] := ARRAY['users_select_own','users_update_own_name_avatar','guides_select_published','experiences_select_published','destinations_select_published'];
+  v_expected_tables TEXT[] := ARRAY['users','users','guides','experiences','destinations'];
+BEGIN
+  SELECT count(*) INTO v_count FROM pg_policies WHERE schemaname = 'public';
+  IF v_count != 5 THEN
+    RAISE EXCEPTION 'Post-003b FAIL: expected 5 policies, found %', v_count;
+  END IF;
+
+  SELECT array_agg(policyname ORDER BY policyname), array_agg(tablename ORDER BY policyname)
+    INTO v_actual_names, v_actual_tables
+  FROM pg_policies WHERE schemaname = 'public';
+
+  FOR i IN 1..5 LOOP
+    IF v_actual_names[i] != v_expected_names[i] OR v_actual_tables[i] != v_expected_tables[i] THEN
+      v_unexpected := v_unexpected || format(' [%s on %s]', v_actual_names[i], v_actual_tables[i]);
+    END IF;
+  END LOOP;
+
+  IF v_unexpected != '' THEN
+    RAISE EXCEPTION 'Post-003b FAIL: policy mismatch:%', v_unexpected;
+  END IF;
+
+  RAISE NOTICE 'PART 4: 003b hardening applied — exactly 5 policies with expected names and tables';
+END $block$;
 
 COMMIT;
 
-DO $$ BEGIN
-  RAISE NOTICE '══════════════════════════════════════════';
-  RAISE NOTICE 'PART 4: 003b migration applied inline';
-  RAISE NOTICE '══════════════════════════════════════════';
-END $$;
+RAISE NOTICE '══════════════════════════════════════════';
+RAISE NOTICE 'PART 4: 003b migration applied inline';
+RAISE NOTICE '══════════════════════════════════════════';
 
 
 -- ================================================================
--- PART 5: BEHAVIORAL RLS TESTS (28+ assertions)
+-- PART 5: BEHAVIORAL RLS TESTS (32 assertions)
 -- ================================================================
-DO $$
+DO $block$
 DECLARE
   v_test_count INT := 0;
   v_pass_count INT := 0;
@@ -531,7 +689,7 @@ BEGIN
 
   -- ═══ CATEGORY A: CATALOGUE ═══
 
-  -- TEST 1: Anon reads published guide (exact 29-column list)
+  -- TEST 1: Anon reads published guide
   v_test_count := v_test_count + 1;
   BEGIN
     PERFORM set_config('role', 'anon', true);
@@ -550,7 +708,7 @@ BEGIN
   END;
   PERFORM set_config('role', 'postgres', true);
 
-  -- TEST 2: Anon reads published experience (RLS filters by is_published)
+  -- TEST 2: Anon reads published experience
   v_test_count := v_test_count + 1;
   BEGIN
     PERFORM set_config('role', 'anon', true);
@@ -558,7 +716,7 @@ BEGIN
     SELECT count(*) INTO v_count FROM public.experiences;
     IF v_count = 1 THEN
       v_pass_count := v_pass_count + 1;
-      RAISE NOTICE '  PASS TEST 2: Anon sees 1 published experience (RLS filters)';
+      RAISE NOTICE '  PASS TEST 2: Anon sees 1 published experience';
     ELSE
       v_fail_count := v_fail_count + 1;
       RAISE WARNING '  FAIL TEST 2: Anon sees % experiences, expected 1', v_count;
@@ -569,7 +727,7 @@ BEGIN
   END;
   PERFORM set_config('role', 'postgres', true);
 
-  -- TEST 3: Anon reads published destination (RLS filters by is_published)
+  -- TEST 3: Anon reads published destination
   v_test_count := v_test_count + 1;
   BEGIN
     PERFORM set_config('role', 'anon', true);
@@ -577,7 +735,7 @@ BEGIN
     SELECT count(*) INTO v_count FROM public.destinations;
     IF v_count = 1 THEN
       v_pass_count := v_pass_count + 1;
-      RAISE NOTICE '  PASS TEST 3: Anon sees 1 published destination (RLS filters)';
+      RAISE NOTICE '  PASS TEST 3: Anon sees 1 published destination';
     ELSE
       v_fail_count := v_fail_count + 1;
       RAISE WARNING '  FAIL TEST 3: Anon sees % destinations, expected 1', v_count;
@@ -609,7 +767,7 @@ BEGIN
 
   -- ═══ CATEGORY B: USERS ═══
 
-  -- TEST 5: Auth reads own profile (6-column list including avatar)
+  -- TEST 5: Auth reads own profile
   v_test_count := v_test_count + 1;
   BEGIN
     PERFORM set_config('role', 'authenticated', true);
@@ -639,13 +797,11 @@ BEGIN
       '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
     PERFORM set_config('request.jwt.sub', '11111111-1111-1111-1111-111111111111', true);
 
-    -- Verify current_user is authenticated
     SELECT current_user INTO v_curr_user;
     IF v_curr_user <> 'authenticated' THEN
       v_fail_count := v_fail_count + 1;
       RAISE WARNING '  FAIL TEST 6: current_user=%, expected authenticated', v_curr_user;
     ELSE
-      -- Real SELECT of all 6 safe columns
       SELECT id || '|' || email || '|' || name || '|' || coalesce(avatar,'') || '|' || role || '|' || created_at::text
         INTO v_text
         FROM public.users
@@ -962,14 +1118,14 @@ BEGIN
   END;
   PERFORM set_config('role', 'postgres', true);
 
-  -- TEST 26: Future function EXECUTE denied to anon
+  -- TEST 26: Future function EXECUTE denied to anon (creates and drops temp function)
   v_test_count := v_test_count + 1;
-  CREATE OR REPLACE FUNCTION public.test_execute_deny()
+  CREATE OR REPLACE FUNCTION public.scenario_c_test_execute_deny()
   RETURNS TEXT AS $fn$ BEGIN RETURN 'ok'; END; $fn$ LANGUAGE plpgsql;
   BEGIN
     PERFORM set_config('role', 'anon', true);
     PERFORM set_config('request.jwt.claims', '{"role":"anon"}', true);
-    PERFORM public.test_execute_deny();
+    PERFORM public.scenario_c_test_execute_deny();
     v_fail_count := v_fail_count + 1;
     RAISE WARNING '  FAIL TEST 26: Anon can execute function';
   EXCEPTION WHEN insufficient_privilege THEN
@@ -977,7 +1133,7 @@ BEGIN
     RAISE NOTICE '  PASS TEST 26: Anon blocked from executing function';
   END;
   PERFORM set_config('role', 'postgres', true);
-  DROP FUNCTION public.test_execute_deny();
+  DROP FUNCTION IF EXISTS public.scenario_c_test_execute_deny();
 
   -- TEST 27: Anon users access MUST error (not empty)
   v_test_count := v_test_count + 1;
@@ -993,7 +1149,7 @@ BEGIN
   END;
   PERFORM set_config('role', 'postgres', true);
 
-  -- TEST 28: Auth SELECT 5-column list (simulates b3c4695 fallback)
+  -- TEST 28: Auth SELECT 5-column list (b3c4695 fallback compatibility)
   v_test_count := v_test_count + 1;
   BEGIN
     PERFORM set_config('role', 'authenticated', true);
@@ -1094,31 +1250,28 @@ BEGIN
   RAISE NOTICE '══════════════════════════════════════════';
   RAISE NOTICE 'TESTS: % passed, % failed (of % total)', v_pass_count, v_fail_count, v_test_count;
   RAISE NOTICE '══════════════════════════════════════════';
-END $$;
+END $block$;
 
 
 -- ================================================================
 -- PART 6: EMERGENCY RECOVERY TEST
 -- ================================================================
-DO $$
+DO $block$
 DECLARE r RECORD; v_count INT;
 BEGIN
   RAISE NOTICE '══════════════════════════════════════════';
   RAISE NOTICE 'EMERGENCY RECOVERY TEST';
   RAISE NOTICE '══════════════════════════════════════════';
 
-  -- Drop the 5 restrictive policies
-  FOR r IN
-    SELECT tablename, policyname FROM pg_policies
-    WHERE schemaname = 'public'
-      AND policyname IN ('users_select_own','users_update_own_name_avatar',
-        'guides_select_published','experiences_select_published','destinations_select_published')
-  LOOP
-    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', r.policyname, r.tablename);
-  END LOOP;
-  RAISE NOTICE '  Dropped 5 restrictive policies';
+  -- Drop the 5 hardened policies explicitly
+  DROP POLICY IF EXISTS "users_select_own" ON public.users;
+  DROP POLICY IF EXISTS "users_update_own_name_avatar" ON public.users;
+  DROP POLICY IF EXISTS "guides_select_published" ON public.guides;
+  DROP POLICY IF EXISTS "experiences_select_published" ON public.experiences;
+  DROP POLICY IF EXISTS "destinations_select_published" ON public.destinations;
+  RAISE NOTICE '  Dropped 5 hardened policies';
 
-  -- Recreate minimum policies
+  -- Recreate minimum split policies for recovery
   CREATE POLICY "guides_select_published" ON public.guides FOR SELECT TO anon USING (status = 'published');
   CREATE POLICY "guides_select_published_auth" ON public.guides FOR SELECT TO authenticated USING (status = 'published');
   CREATE POLICY "experiences_select_published" ON public.experiences FOR SELECT TO anon USING (is_published = true);
@@ -1127,7 +1280,7 @@ BEGIN
   CREATE POLICY "destinations_select_published_auth" ON public.destinations FOR SELECT TO authenticated USING (is_published = true);
   CREATE POLICY "users_select_own" ON public.users FOR SELECT TO authenticated USING (auth.uid() = id);
   CREATE POLICY "users_update_own_name_avatar" ON public.users FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
-  RAISE NOTICE '  Recreated minimum policies';
+  RAISE NOTICE '  Recreated 9 recovery policies';
 
   -- Verify catalogue queries work
   PERFORM set_config('role', 'anon', true);
@@ -1140,14 +1293,49 @@ BEGIN
   END IF;
   PERFORM set_config('role', 'postgres', true);
 
+  -- Restore the exact 5 hardened policies
+  DROP POLICY IF EXISTS "users_select_own" ON public.users;
+  DROP POLICY IF EXISTS "users_update_own_name_avatar" ON public.users;
+  DROP POLICY IF EXISTS "guides_select_published" ON public.guides;
+  DROP POLICY IF EXISTS "guides_select_published_auth" ON public.guides;
+  DROP POLICY IF EXISTS "experiences_select_published" ON public.experiences;
+  DROP POLICY IF EXISTS "experiences_select_published_auth" ON public.experiences;
+  DROP POLICY IF EXISTS "destinations_select_published" ON public.destinations;
+  DROP POLICY IF EXISTS "destinations_select_published_auth" ON public.destinations;
+
+  CREATE POLICY "users_select_own"
+    ON public.users FOR SELECT TO authenticated
+    USING (auth.uid() = id);
+  CREATE POLICY "users_update_own_name_avatar"
+    ON public.users FOR UPDATE TO authenticated
+    USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+  CREATE POLICY "guides_select_published"
+    ON public.guides FOR SELECT
+    USING (status = 'published');
+  CREATE POLICY "experiences_select_published"
+    ON public.experiences FOR SELECT
+    USING (is_published = true);
+  CREATE POLICY "destinations_select_published"
+    ON public.destinations FOR SELECT
+    USING (is_published = true);
+  RAISE NOTICE '  Restored 5 hardened policies';
+
+  -- Verify exactly 5 hardened policies remain
+  SELECT count(*) INTO v_count FROM pg_policies WHERE schemaname = 'public';
+  IF v_count = 5 THEN
+    RAISE NOTICE '  EMERGENCY RECOVERY: 5 hardened policies confirmed';
+  ELSE
+    RAISE WARNING '  EMERGENCY RECOVERY: Expected 5 policies, found %', v_count;
+  END IF;
+
   RAISE NOTICE 'EMERGENCY RECOVERY TEST COMPLETE';
-END $$;
+END $block$;
 
 
 -- ================================================================
 -- PART 7: pg_proc SIGNATURE AUDIT
 -- ================================================================
-DO $$
+DO $block$
 DECLARE
   r RECORD;
   v_count INT := 0;
@@ -1179,24 +1367,30 @@ BEGIN
   END IF;
 
   RAISE NOTICE '══════════════════════════════════════════';
-END $$;
+END $block$;
 
 
 -- ================================================================
 -- FINAL SUMMARY
 -- ================================================================
-DO $$ BEGIN
+DO $block$ BEGIN
   RAISE NOTICE '══════════════════════════════════════════';
   RAISE NOTICE '003 DRY RUN SCENARIO-C: COMPLETE';
   RAISE NOTICE '══════════════════════════════════════════';
-  RAISE NOTICE 'Schema: 17 tables + avatar column + is_published on experiences/destinations.';
-  RAISE NOTICE 'Policies: 5 restrictive (users, guides, experiences, destinations).';
+  RAISE NOTICE 'Schema: 16 tables + avatar column + is_published on experiences/destinations.';
+  RAISE NOTICE 'Policy allowlist: 25 known (20 legacy + 5 hardened).';
+  RAISE NOTICE 'Baseline-reset: explicit DROP POLICY IF EXISTS for each of 25 named policies.';
+  RAISE NOTICE 'Pre-003 verification: 20 policies with exact name+table check.';
+  RAISE NOTICE 'Post-003b verification: 5 policies with exact name+table check.';
   RAISE NOTICE 'Functions: ALL EXECUTE revoked from PUBLIC/anon/authenticated/service_role;';
   RAISE NOTICE '  3 RPCs regranted to service_role with exact pg_proc signatures.';
   RAISE NOTICE 'Default privileges: global + schema-scoped for postgres and supabase_admin.';
   RAISE NOTICE 'Tests: 32 assertions (catalogue, users, privilege escalation, write deny,';
   RAISE NOTICE '  Netlify-only tables, sensitive columns, infrastructure, service role,';
   RAISE NOTICE '  fallback column lists, emergency recovery, pg_proc audit).';
+  RAISE NOTICE 'Temp objects: cleaned up (scenario_c_test_execute_deny dropped).';
+  RAISE NOTICE 'Role resets: every test resets to postgres after completion.';
+  RAISE NOTICE 'Idempotent: safe to run twice consecutively.';
   RAISE NOTICE 'NEXT: Run Supabase Security Advisor.';
   RAISE NOTICE '══════════════════════════════════════════';
-END $$;
+END $block$;
