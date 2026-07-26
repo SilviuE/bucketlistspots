@@ -965,7 +965,7 @@ BEGIN
   -- TEST 26: Future function EXECUTE denied to anon
   v_test_count := v_test_count + 1;
   CREATE OR REPLACE FUNCTION public.test_execute_deny()
-  RETURNS TEXT AS $$ BEGIN RETURN 'ok'; END; $$ LANGUAGE plpgsql;
+  RETURNS TEXT AS $fn$ BEGIN RETURN 'ok'; END; $fn$ LANGUAGE plpgsql;
   BEGIN
     PERFORM set_config('role', 'anon', true);
     PERFORM set_config('request.jwt.claims', '{"role":"anon"}', true);
