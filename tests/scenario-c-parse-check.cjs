@@ -139,11 +139,13 @@ check('RAISE counts present', true);
 // ─── 6. STRUCTURAL ELEMENT COUNTS ──────────────────────────────
 console.log('\n6. Structural element counts:');
 
-const createTable = (sql.match(/CREATE TABLE IF NOT EXISTS/g) || []).length;
-const createPolicy = (sql.match(/CREATE POLICY/g) || []).length;
-const dropPolicy = (sql.match(/DROP POLICY IF EXISTS/g) || []).length;
-const createFunc = (sql.match(/CREATE OR REPLACE FUNCTION/g) || []).length;
-const doBlock = (sql.match(/^DO\s+\$/gm) || []).length;
+// Strip SQL comments before counting structural elements
+const sqlNoComments = sql.replace(/--[^\n]*/g, '');
+const createTable = (sqlNoComments.match(/CREATE TABLE IF NOT EXISTS/g) || []).length;
+const createPolicy = (sqlNoComments.match(/CREATE POLICY/g) || []).length;
+const dropPolicy = (sqlNoComments.match(/DROP POLICY IF EXISTS/g) || []).length;
+const createFunc = (sqlNoComments.match(/CREATE OR REPLACE FUNCTION/g) || []).length;
+const doBlock = (sqlNoComments.match(/^DO\s+\$/gm) || []).length;
 
 check(`CREATE TABLE IF NOT EXISTS: ${createTable} (expected 17)`, createTable === 17, `Found ${createTable}`);
 check(`CREATE POLICY: ${createPolicy} (expected 38 total across all parts)`, createPolicy >= 38, `Found ${createPolicy}`);

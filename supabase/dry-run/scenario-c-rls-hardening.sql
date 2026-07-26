@@ -3,10 +3,11 @@
 -- ================================================================
 -- Run this in a DISPOSABLE Supabase project SQL Editor.
 --
--- Part 1: Production-schema setup (16 tables + RPCs + 20 legacy policies)
+-- Part 0: Schema preflight (information_schema audit)
+-- Part 1: Production-schema setup (17 tables + reconciliation + RPCs + 20 legacy policies)
 -- Part 2: Add is_published columns (simulates 003a)
 -- Part 3: Backfill founder-approved rows (simulates 003_backfill)
--- Part 4: Apply 003b migration inline (drop 20 → create 5 hardened)
+-- Part 4: Apply 003b migration inline (drop 20 -> create 5 hardened)
 -- Part 5: Behavioral RLS tests (32 assertions)
 -- Part 6: Emergency recovery test
 -- Part 7: pg_proc signature audit
@@ -14,6 +15,13 @@
 -- Policy allowlist (25 total):
 --   20 legacy pre-003 policies
 --    5 hardened post-003b policies
+--
+-- Schema reconciliation:
+--   CREATE TABLE IF NOT EXISTS creates tables that do not exist.
+--   ALTER TABLE ADD COLUMN IF NOT EXISTS adds missing columns to
+--   existing tables. This handles any starting state: clean
+--   database, partial schema (e.g. 11-column guides), or full
+--   schema. Every statement is idempotent.
 --
 -- Idempotent: safe to run twice consecutively on the same project.
 -- DO NOT run against production.
@@ -24,61 +32,147 @@
 -- POLICY ALLOWLIST (25 known policies)
 -- ================================================================
 -- Legacy pre-003 (20):
---   1.  platform_config_admin          → platform_config
---   2.  transactions_select_own        → transactions
---   3.  payment_reports_admin_only     → payment_reports
---   4.  admin_manage_claims            → claims_registry
---   5.  public_read_approved_claims    → claims_registry
---   6.  admin_manage_testimonials      → testimonials
---   7.  public_read_approved_testimonials → testimonials
---   8.  Users read own fundraising pages     → fundraising_pages
---   9.  Users create own fundraising pages   → fundraising_pages
---  10.  Users update own fundraising pages   → fundraising_pages
---  11.  Public can view active charities     → destination_charities
---  12.  posts_select                   → posts
---  13.  posts_insert                   → posts
---  14.  posts_update                   → posts
---  15.  posts_delete                   → posts
---  16.  posts_select_anon              → posts
---  17.  terms_acceptance_service_insert → terms_acceptance
---  18.  terms_acceptance_service_select → terms_acceptance
---  19.  webhook_inbox_service_all      → webhook_event_inbox
---  20.  booking_conf_service_all       → booking_confirmations
+--   1.  platform_config_admin          -> platform_config
+--   2.  transactions_select_own        -> transactions
+--   3.  payment_reports_admin_only     -> payment_reports
+--   4.  admin_manage_claims            -> claims_registry
+--   5.  public_read_approved_claims    -> claims_registry
+--   6.  admin_manage_testimonials      -> testimonials
+--   7.  public_read_approved_testimonials -> testimonials
+--   8.  Users read own fundraising pages     -> fundraising_pages
+--   9.  Users create own fundraising pages   -> fundraising_pages
+--  10.  Users update own fundraising pages   -> fundraising_pages
+--  11.  Public can view active charities     -> destination_charities
+--  12.  posts_select                   -> posts
+--  13.  posts_insert                   -> posts
+--  14.  posts_update                   -> posts
+--  15.  posts_delete                   -> posts
+--  16.  posts_select_anon              -> posts
+--  17.  terms_acceptance_service_insert -> terms_acceptance
+--  18.  terms_acceptance_service_select -> terms_acceptance
+--  19.  webhook_inbox_service_all      -> webhook_event_inbox
+--  20.  booking_conf_service_all       -> booking_confirmations
 --
 -- Hardened post-003b (5):
---  21.  users_select_own               → users
---  22.  users_update_own_name_avatar   → users
---  23.  guides_select_published        → guides
---  24.  experiences_select_published   → experiences
---  25.  destinations_select_published  → destinations
+--  21.  users_select_own               -> users
+--  22.  users_update_own_name_avatar   -> users
+--  23.  guides_select_published        -> guides
+--  24.  experiences_select_published   -> experiences
+--  25.  destinations_select_published  -> destinations
+
+
+-- ================================================================
+-- PART 0: SCHEMA PREFLIGHT
+-- ================================================================
+-- Checks information_schema.columns for the 4 core tables.
+-- Reports missing columns BEFORE any DDL. Informational only:
+-- Part 1 will reconcile via ALTER TABLE ADD COLUMN IF NOT EXISTS.
+-- ================================================================
+
+DO $block$
+DECLARE
+  v_missing TEXT := '';
+  v_tables TEXT[] := ARRAY['users','guides','experiences','destinations'];
+  v_users_cols TEXT[] := ARRAY[
+    'id','email','name','role','referral_code','bls_points_balance','created_at','avatar'
+  ];
+  v_guides_cols TEXT[] := ARRAY[
+    'id','name','trading_name','email','status','referral_code','bls_points_balance',
+    'referred_by_ambassador_id','price_currency','routes','created_at',
+    'user_id','photo','hero_image','bio','why_independent','location',
+    'languages','experience','certifications','promise','badge','tagline',
+    'price','featured','review_count','trips_led','video_intro','tripadvisor_embed',
+    'identity_verified','license_verified','safety_verified','fair_pay_verified','updated_at'
+  ];
+  v_experiences_cols TEXT[] := ARRAY[
+    'id','title','duration','difficulty','location','image',
+    'price','currency','guide_id','badge','rating','reviews','featured','is_published'
+  ];
+  v_destinations_cols TEXT[] := ARRAY[
+    'name','country','image','guide_count','is_published'
+  ];
+  v_cols TEXT[];
+  v_table_exists BOOLEAN;
+  v_found INT;
+  v_total_expected INT := 0;
+  v_total_found INT := 0;
+  v_total_missing INT := 0;
+  r RECORD;
+BEGIN
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'PART 0: SCHEMA PREFLIGHT';
+  RAISE NOTICE '══════════════════════════════════════════';
+
+  FOR r IN
+    SELECT unnest(ARRAY['users','guides','experiences','destinations']) AS tbl,
+           unnest(ARRAY[v_users_cols, v_guides_cols, v_experiences_cols, v_destinations_cols]) AS cols
+  LOOP
+    v_cols := r.cols;
+    v_total_expected := v_total_expected + array_length(v_cols, 1);
+
+    SELECT EXISTS(
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = r.tbl
+    ) INTO v_table_exists;
+
+    IF NOT v_table_exists THEN
+      RAISE NOTICE '  %: TABLE DOES NOT EXIST (will be created)', r.tbl;
+      v_total_missing := v_total_missing + array_length(v_cols, 1);
+      CONTINUE;
+    END IF;
+
+    FOR i IN 1..array_length(v_cols, 1) LOOP
+      SELECT count(*) INTO v_found
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = r.tbl AND column_name = v_cols[i];
+      IF v_found > 0 THEN
+        v_total_found := v_total_found + 1;
+      ELSE
+        v_total_missing := v_total_missing + 1;
+        v_missing := v_missing || format('  %s.%s (will be added)\n', r.tbl, v_cols[i]);
+      END IF;
+    END LOOP;
+
+    RAISE NOTICE '  %: table exists, %/% columns present', r.tbl,
+      (array_length(v_cols, 1) - (
+        SELECT count(*) FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = r.tbl
+           AND column_name = ANY(v_cols)
+      )), array_length(v_cols, 1);
+  END LOOP;
+
+  RAISE NOTICE '';
+  RAISE NOTICE 'Preflight summary: % expected, % present, % missing',
+    v_total_expected, v_total_found, v_total_missing;
+
+  IF v_missing != '' THEN
+    RAISE NOTICE 'Missing columns:\n%', v_missing;
+    RAISE NOTICE 'These will be reconciled in Part 1 via ALTER TABLE ADD COLUMN IF NOT EXISTS.';
+  ELSE
+    RAISE NOTICE 'All expected columns present. No reconciliation needed.';
+  END IF;
+END $block$;
 
 
 -- ================================================================
 -- PART 1: PRODUCTION-SCHEMA SETUP
 -- ================================================================
 
+-- ── 1a. Create tables that do not yet exist ─────────────────────
+
 CREATE TABLE IF NOT EXISTS public.users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT, name TEXT, role TEXT DEFAULT 'user',
-  referral_code TEXT UNIQUE, bls_points_balance INTEGER NOT NULL DEFAULT 0,
+  referral_code TEXT, bls_points_balance INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS public.guides (
-  id TEXT PRIMARY KEY, user_id UUID REFERENCES auth.users(id),
+  id TEXT PRIMARY KEY,
   name TEXT, trading_name TEXT, email TEXT, status TEXT DEFAULT 'draft',
-  photo TEXT, hero_image TEXT, bio TEXT, why_independent TEXT, location TEXT,
-  languages JSONB DEFAULT '[]'::jsonb, experience INTEGER DEFAULT 0,
-  certifications TEXT, promise TEXT, badge TEXT, tagline TEXT,
-  routes JSONB DEFAULT '[]'::jsonb, price NUMERIC(10,2) DEFAULT 0,
-  price_currency TEXT DEFAULT 'usd', featured BOOLEAN DEFAULT false,
-  review_count INTEGER DEFAULT 0, trips_led INTEGER DEFAULT 0,
-  video_intro TEXT, tripadvisor_embed TEXT,
-  identity_verified BOOLEAN DEFAULT false, license_verified BOOLEAN DEFAULT false,
-  safety_verified BOOLEAN DEFAULT false, fair_pay_verified BOOLEAN DEFAULT false,
-  referral_code TEXT UNIQUE, bls_points_balance INTEGER NOT NULL DEFAULT 0,
-  referred_by_ambassador_id TEXT, updated_at TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  referral_code TEXT, bls_points_balance INTEGER NOT NULL DEFAULT 0,
+  referred_by_ambassador_id TEXT, price_currency TEXT DEFAULT 'usd',
+  routes JSONB DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS public.experiences (
@@ -214,7 +308,53 @@ CREATE TABLE IF NOT EXISTS public.destination_charities (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- RPCs (exact signatures from 002 migration source)
+
+-- ── 1b. Schema reconciliation ──────────────────────────────────
+-- Adds columns that may be missing in an existing disposable project.
+-- No-ops for fresh databases (columns already present from CREATE TABLE).
+-- No-ops for fully-reconciled databases (ADD COLUMN IF NOT EXISTS).
+
+-- users: add avatar (missing from 7-column baseline)
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS avatar TEXT;
+
+-- guides: add 23 columns missing from 11-column baseline
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS photo TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS hero_image TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS bio TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS why_independent TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS location TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS languages JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS experience INTEGER DEFAULT 0;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS certifications TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS promise TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS badge TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS tagline TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS price NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS featured BOOLEAN DEFAULT false;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS review_count INTEGER DEFAULT 0;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS trips_led INTEGER DEFAULT 0;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS video_intro TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS tripadvisor_embed TEXT;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS identity_verified BOOLEAN DEFAULT false;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS license_verified BOOLEAN DEFAULT false;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS safety_verified BOOLEAN DEFAULT false;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS fair_pay_verified BOOLEAN DEFAULT false;
+ALTER TABLE public.guides ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- experiences: add is_published if table was created fresh without it
+ALTER TABLE public.experiences ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
+
+-- destinations: add is_published if table was created fresh without it
+ALTER TABLE public.destinations ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
+
+DO $block$ BEGIN
+  RAISE NOTICE 'PART 1: Schema reconciliation complete (users +1 col, guides +23 cols, experiences/destinations ensured)';
+END $block$;
+
+
+-- ── 1c. RPCs (exact signatures from 002 migration source) ──────
+
 CREATE OR REPLACE FUNCTION public.credit_referral_reward(
   p_session_id TEXT, p_user_id UUID, p_amount NUMERIC, p_reason TEXT,
   p_referral_code TEXT, p_idempotency_key TEXT
@@ -243,7 +383,9 @@ CREATE OR REPLACE FUNCTION public.claim_webhook_event(
 ) RETURNS TABLE (claimed BOOLEAN, action TEXT) LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
 AS $fn$ BEGIN RAISE EXCEPTION 'stub'; RETURN; END; $fn$;
 
--- Enable RLS on all tables
+
+-- ── 1d. Enable RLS on all tables ───────────────────────────────
+
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.guides ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.experiences ENABLE ROW LEVEL SECURITY;
@@ -262,8 +404,10 @@ ALTER TABLE public.claims_registry ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fundraising_pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.destination_charities ENABLE ROW LEVEL SECURITY;
 
--- Explicit baseline-reset: drop all 25 known policies before recreating legacy baseline.
--- This is idempotent: works when zero, seven, twenty, or five policies exist.
+
+-- ── 1e. Explicit baseline-reset ────────────────────────────────
+-- Drop all 25 known policies before recreating legacy baseline.
+-- Idempotent: works when zero, seven, twenty, or five policies exist.
 
 DROP POLICY IF EXISTS "platform_config_admin" ON public.platform_config;
 DROP POLICY IF EXISTS "transactions_select_own" ON public.transactions;
@@ -291,7 +435,9 @@ DROP POLICY IF EXISTS "guides_select_published" ON public.guides;
 DROP POLICY IF EXISTS "experiences_select_published" ON public.experiences;
 DROP POLICY IF EXISTS "destinations_select_published" ON public.destinations;
 
--- Create the exact 20 legacy pre-003 policies
+
+-- ── 1f. Create the exact 20 legacy pre-003 policies ────────────
+
 CREATE POLICY "platform_config_admin" ON public.platform_config FOR ALL TO service_role USING (true);
 CREATE POLICY "transactions_select_own" ON public.transactions FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "payment_reports_admin_only" ON public.payment_reports FOR ALL TO service_role USING (true);
@@ -313,12 +459,38 @@ CREATE POLICY "terms_acceptance_service_select" ON public.terms_acceptance FOR S
 CREATE POLICY "webhook_inbox_service_all" ON public.webhook_event_inbox FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "booking_conf_service_all" ON public.booking_confirmations FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- Pre-003 Supabase-default grants
+
+-- ── 1g. Pre-003 Supabase-default grants ────────────────────────
+
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 
--- Representative test data
+
+-- ── 1h. Cleanup from any previous partial run ──────────────────
+-- Deletes test data identified by known IDs/names.
+-- Order respects FK constraints: child tables first, auth.users last.
+
+DO $block$ BEGIN
+  DELETE FROM public.guides WHERE id IN ('guide_pub','guide_draft');
+  DELETE FROM public.posts WHERE user_id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
+  DELETE FROM public.transactions WHERE user_id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
+  DELETE FROM public.fundraising_pages WHERE id = 'fp001';
+  DELETE FROM public.claims_registry WHERE id IN ('c001','c002');
+  DELETE FROM public.testimonials WHERE id IN ('t001','t002');
+  DELETE FROM public.destination_charities WHERE id = 'dc001';
+  DELETE FROM public.destinations WHERE name IN ('Kilimanjaro','Everest Base Camp');
+  DELETE FROM public.experiences WHERE id IN ('exp001','exp002');
+  DELETE FROM public.users WHERE id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
+  DELETE FROM auth.users WHERE id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
+  RAISE NOTICE 'PART 1: Cleanup complete (previous test data removed)';
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'PART 1: Cleanup partial (%)', SQLERRM;
+END $block$;
+
+
+-- ── 1i. Representative test data ───────────────────────────────
+
 INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token)
 VALUES
   ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'alice@test.com', crypt('pass', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
@@ -365,7 +537,9 @@ INSERT INTO public.claims_registry (id, claim_key, claim_text, page, claim_type,
   ('c002', 'unverified', 'Not approved', 'home', 'ethical', 'draft', 'hidden')
 ON CONFLICT (id) DO NOTHING;
 
--- Verify legacy baseline: exactly 20 policies with expected names
+
+-- ── 1j. Verify legacy baseline: exactly 20 policies ───────────
+
 DO $block$
 DECLARE
   v_actual_names TEXT[];
@@ -418,10 +592,11 @@ END $block$;
 -- ================================================================
 -- PART 2: ADD PUBLICATION COLUMNS (simulates 003a)
 -- ================================================================
+-- No-ops: is_published was already added in Part 1b reconciliation.
 ALTER TABLE public.experiences ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE public.destinations ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;
 
-DO $block$ BEGIN RAISE NOTICE 'PART 2: is_published columns added'; END $block$;
+DO $block$ BEGIN RAISE NOTICE 'PART 2: is_published columns ensured'; END $block$;
 
 
 -- ================================================================
@@ -453,7 +628,7 @@ DO $block$ BEGIN
   RAISE NOTICE 'Publication check passed: destinations has at least one published row.';
 END $block$;
 
--- 4b. Add avatar column
+-- 4b. Add avatar column (no-op if already present from Part 1b)
 DO $block$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='users' AND column_name='avatar') THEN
@@ -483,7 +658,7 @@ DROP POLICY IF EXISTS "terms_acceptance_service_select" ON public.terms_acceptan
 DROP POLICY IF EXISTS "webhook_inbox_service_all" ON public.webhook_event_inbox;
 DROP POLICY IF EXISTS "booking_conf_service_all" ON public.booking_confirmations;
 
--- Verify: exactly 0 policies on the 16 scoped tables after explicit drops
+-- Verify: exactly 0 policies after explicit drops
 DO $block$
 DECLARE v_count INT;
 BEGIN
@@ -632,7 +807,7 @@ DO $block$ BEGIN
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
 END $block$;
 
--- 4i. Verify post-003b: exactly 5 hardened policies, no legacy policies remain
+-- 4i. Verify post-003b: exactly 5 hardened policies
 DO $block$
 DECLARE
   v_count INT;
@@ -1030,7 +1205,7 @@ BEGIN
     RAISE WARNING '  FAIL TEST 19: auth read bls_points_balance — got %', v_count;
   EXCEPTION WHEN insufficient_privilege THEN
     v_pass_count := v_pass_count + 1;
-    RAISE NOTICE '  PASS TEST 19: auth SELECT users.bls_points_balance denied';
+    RAISE NOTICE '  PASS 19: auth SELECT users.bls_points_balance denied';
   END;
   PERFORM set_config('role', 'postgres', true);
 
@@ -1379,7 +1554,8 @@ DO $block$ BEGIN
   RAISE NOTICE '══════════════════════════════════════════';
   RAISE NOTICE '003 DRY RUN SCENARIO-C: COMPLETE';
   RAISE NOTICE '══════════════════════════════════════════';
-  RAISE NOTICE 'Schema: 16 tables + avatar column + is_published on experiences/destinations.';
+  RAISE NOTICE 'Schema: 17 tables + reconciliation (users +1, guides +23 cols).';
+  RAISE NOTICE 'Preflight: information_schema audit of 4 core tables.';
   RAISE NOTICE 'Policy allowlist: 25 known (20 legacy + 5 hardened).';
   RAISE NOTICE 'Baseline-reset: explicit DROP POLICY IF EXISTS for each of 25 named policies.';
   RAISE NOTICE 'Pre-003 verification: 20 policies with exact name+table check.';
@@ -1390,6 +1566,7 @@ DO $block$ BEGIN
   RAISE NOTICE 'Tests: 32 assertions (catalogue, users, privilege escalation, write deny,';
   RAISE NOTICE '  Netlify-only tables, sensitive columns, infrastructure, service role,';
   RAISE NOTICE '  fallback column lists, emergency recovery, pg_proc audit).';
+  RAISE NOTICE 'Cleanup: deterministic DELETE of previous test data (FK-safe order).';
   RAISE NOTICE 'Temp objects: cleaned up (scenario_c_test_execute_deny dropped).';
   RAISE NOTICE 'Role resets: every test resets to postgres after completion.';
   RAISE NOTICE 'Idempotent: safe to run twice consecutively.';
