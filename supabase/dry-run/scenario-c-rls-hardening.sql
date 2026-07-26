@@ -104,8 +104,13 @@ BEGIN
   RAISE NOTICE '══════════════════════════════════════════';
 
   FOR r IN
-    SELECT unnest(ARRAY['users','guides','experiences','destinations']) AS tbl,
-           unnest(ARRAY[v_users_cols, v_guides_cols, v_experiences_cols, v_destinations_cols]) AS cols
+    SELECT x.tbl, x.cols
+    FROM (VALUES
+      ('users'::text,       v_users_cols),
+      ('guides'::text,      v_guides_cols),
+      ('experiences'::text, v_experiences_cols),
+      ('destinations'::text,v_destinations_cols)
+    ) AS x(tbl, cols)
   LOOP
     v_cols := r.cols;
     v_total_expected := v_total_expected + array_length(v_cols, 1);
@@ -140,6 +145,19 @@ BEGIN
            AND column_name = ANY(v_cols)
       )), array_length(v_cols, 1);
   END LOOP;
+
+  -- Runtime assertion: verify ragged arrays were handled correctly
+  IF array_length(v_users_cols, 1) = array_length(v_guides_cols, 1)
+     OR array_length(v_guides_cols, 1) = array_length(v_experiences_cols, 1)
+     OR array_length(v_experiences_cols, 1) = array_length(v_destinations_cols, 1) THEN
+    RAISE EXCEPTION 'Runtime test FAIL: column arrays are not ragged — VALUES fix not validated '
+      '(users=%, guides=%, experiences=%, destinations=%)',
+      array_length(v_users_cols,1), array_length(v_guides_cols,1),
+      array_length(v_experiences_cols,1), array_length(v_destinations_cols,1);
+  END IF;
+  RAISE NOTICE 'Runtime test PASS: ragged arrays confirmed (users=%, guides=%, experiences=%, destinations=%)',
+    array_length(v_users_cols,1), array_length(v_guides_cols,1),
+    array_length(v_experiences_cols,1), array_length(v_destinations_cols,1);
 
   RAISE NOTICE '';
   RAISE NOTICE 'Preflight summary: % expected, % present, % missing',
@@ -475,12 +493,12 @@ DO $block$ BEGIN
   DELETE FROM public.guides WHERE id IN ('guide_pub','guide_draft');
   DELETE FROM public.posts WHERE user_id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
   DELETE FROM public.transactions WHERE user_id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
-  DELETE FROM public.fundraising_pages WHERE id = 'fp001';
-  DELETE FROM public.claims_registry WHERE id IN ('c001','c002');
-  DELETE FROM public.testimonials WHERE id IN ('t001','t002');
-  DELETE FROM public.destination_charities WHERE id = 'dc001';
+  DELETE FROM public.fundraising_pages WHERE id = 'a0000000-0000-0000-0000-000000000003';
+  DELETE FROM public.claims_registry WHERE id IN ('a0000000-0000-0000-0000-000000000007','a0000000-0000-0000-0000-000000000008');
+  DELETE FROM public.testimonials WHERE id IN ('a0000000-0000-0000-0000-000000000005','a0000000-0000-0000-0000-000000000006');
+  DELETE FROM public.destination_charities WHERE id = 'a0000000-0000-0000-0000-000000000004';
   DELETE FROM public.destinations WHERE name IN ('Kilimanjaro','Everest Base Camp');
-  DELETE FROM public.experiences WHERE id IN ('exp001','exp002');
+  DELETE FROM public.experiences WHERE id IN ('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002');
   DELETE FROM public.users WHERE id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
   DELETE FROM auth.users WHERE id IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
   RAISE NOTICE 'PART 1: Cleanup complete (previous test data removed)';
@@ -510,8 +528,8 @@ INSERT INTO public.guides (id, user_id, name, trading_name, status, photo, bio, 
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.experiences (id, title, duration, difficulty, location, image, price, currency, guide_id, featured) VALUES
-  ('exp001', 'Kilimanjaro Machame', '7 days', 'Challenging', 'Tanzania', 'kili.jpg', 2500, 'usd', 'guide_pub', true),
-  ('exp002', 'Everest Base Camp Trek', '14 days', 'Hard', 'Nepal', 'ebc.jpg', 3200, 'usd', 'guide_pub', false)
+  ('a0000000-0000-0000-0000-000000000001', 'Kilimanjaro Machame', '7 days', 'Challenging', 'Tanzania', 'kili.jpg', 2500, 'usd', 'guide_pub', true),
+  ('a0000000-0000-0000-0000-000000000002', 'Everest Base Camp Trek', '14 days', 'Hard', 'Nepal', 'ebc.jpg', 3200, 'usd', 'guide_pub', false)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.destinations (name, country, image, guide_count) VALUES
@@ -520,21 +538,21 @@ INSERT INTO public.destinations (name, country, image, guide_count) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO public.fundraising_pages (id, user_id, charity_name, charity_api_id, page_title, target_amount, currency, status) VALUES
-  ('fp001', '11111111-1111-1111-1111-111111111111', 'KPAP', 'kpap', 'Climb for Charity', 500, 'GBP', 'active')
+  ('a0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'KPAP', 'kpap', 'Climb for Charity', 500, 'GBP', 'active')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.destination_charities (id, destination, charity_name, charity_api_id, is_active) VALUES
-  ('dc001', 'Kilimanjaro', 'KPAP', 'kpap', true)
+  ('a0000000-0000-0000-0000-000000000004', 'Kilimanjaro', 'KPAP', 'kpap', true)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.testimonials (id, person_name, testimonial_text, consent_status, approval_status, is_published) VALUES
-  ('t001', 'Happy Traveller', 'Amazing experience!', 'granted', 'approved', true),
-  ('t002', 'Unapproved Person', 'Great trip', 'pending', 'draft', false)
+  ('a0000000-0000-0000-0000-000000000005', 'Happy Traveller', 'Amazing experience!', 'granted', 'approved', true),
+  ('a0000000-0000-0000-0000-000000000006', 'Unapproved Person', 'Great trip', 'pending', 'draft', false)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.claims_registry (id, claim_key, claim_text, page, claim_type, approval_status, publication_status) VALUES
-  ('c001', 'fair_pay', 'All guides earn fair wages', 'home', 'ethical', 'approved', 'published'),
-  ('c002', 'unverified', 'Not approved', 'home', 'ethical', 'draft', 'hidden')
+  ('a0000000-0000-0000-0000-000000000007', 'fair_pay', 'All guides earn fair wages', 'home', 'ethical', 'approved', 'published'),
+  ('a0000000-0000-0000-0000-000000000008', 'unverified', 'Not approved', 'home', 'ethical', 'draft', 'hidden')
 ON CONFLICT (id) DO NOTHING;
 
 
@@ -546,24 +564,26 @@ DECLARE
   v_actual_tables TEXT[];
   v_count INT;
   v_expected_names TEXT[] := ARRAY[
-    'platform_config_admin','transactions_select_own','payment_reports_admin_only',
-    'admin_manage_claims','public_read_approved_claims',
-    'admin_manage_testimonials','public_read_approved_testimonials',
-    'Users read own fundraising pages','Users create own fundraising pages',
-    'Users update own fundraising pages','Public can view active charities',
-    'posts_select','posts_insert','posts_update','posts_delete','posts_select_anon',
-    'terms_acceptance_service_insert','terms_acceptance_service_select',
-    'webhook_inbox_service_all','booking_conf_service_all'
+    'Public can view active charities',
+    'Users create own fundraising pages','Users read own fundraising pages',
+    'Users update own fundraising pages','admin_manage_claims',
+    'admin_manage_testimonials','booking_conf_service_all',
+    'payment_reports_admin_only','platform_config_admin',
+    'posts_delete','posts_insert','posts_select','posts_select_anon',
+    'posts_update','public_read_approved_claims',
+    'public_read_approved_testimonials','terms_acceptance_service_insert',
+    'terms_acceptance_service_select','transactions_select_own',
+    'webhook_inbox_service_all'
   ];
   v_expected_tables TEXT[] := ARRAY[
-    'platform_config','transactions','payment_reports',
-    'claims_registry','claims_registry',
-    'testimonials','testimonials',
-    'fundraising_pages','fundraising_pages','fundraising_pages',
     'destination_charities',
+    'fundraising_pages','fundraising_pages','fundraising_pages',
+    'claims_registry','testimonials','booking_confirmations',
+    'payment_reports','platform_config',
     'posts','posts','posts','posts','posts',
+    'claims_registry','testimonials',
     'terms_acceptance','terms_acceptance',
-    'webhook_event_inbox','booking_confirmations'
+    'transactions','webhook_event_inbox'
   ];
   v_unexpected TEXT := '';
 BEGIN
@@ -602,10 +622,10 @@ DO $block$ BEGIN RAISE NOTICE 'PART 2: is_published columns ensured'; END $block
 -- ================================================================
 -- PART 3: BACKFILL FOUNDER-APPROVED ROWS (simulates 003_backfill)
 -- ================================================================
-UPDATE public.experiences SET is_published = true WHERE id = 'exp001';
+UPDATE public.experiences SET is_published = true WHERE id = 'a0000000-0000-0000-0000-000000000001';
 UPDATE public.destinations SET is_published = true WHERE name = 'Kilimanjaro';
 
-DO $block$ BEGIN RAISE NOTICE 'PART 3: Backfill complete (exp001 + Kilimanjaro published)'; END $block$;
+DO $block$ BEGIN   RAISE NOTICE 'PART 3: Backfill complete (a0000000-...0001 + Kilimanjaro published)'; END $block$;
 
 
 -- ================================================================
@@ -814,8 +834,8 @@ DECLARE
   v_actual_names TEXT[];
   v_actual_tables TEXT[];
   v_unexpected TEXT := '';
-  v_expected_names  TEXT[] := ARRAY['users_select_own','users_update_own_name_avatar','guides_select_published','experiences_select_published','destinations_select_published'];
-  v_expected_tables TEXT[] := ARRAY['users','users','guides','experiences','destinations'];
+  v_expected_names  TEXT[] := ARRAY['destinations_select_published','experiences_select_published','guides_select_published','users_select_own','users_update_own_name_avatar'];
+  v_expected_tables TEXT[] := ARRAY['destinations','experiences','guides','users','users'];
 BEGIN
   SELECT count(*) INTO v_count FROM pg_policies WHERE schemaname = 'public';
   IF v_count != 5 THEN
@@ -928,7 +948,7 @@ BEGIN
   BEGIN
     PERFORM set_config('role', 'anon', true);
     PERFORM set_config('request.jwt.claims', '{"role":"anon"}', true);
-    SELECT count(*) INTO v_count FROM public.experiences WHERE id = 'exp002';
+    SELECT count(*) INTO v_count FROM public.experiences WHERE id = 'a0000000-0000-0000-0000-000000000002';
     IF v_count = 0 THEN
       v_pass_count := v_pass_count + 1;
       RAISE NOTICE '  PASS TEST 4: Anon cannot see unpublished experience';
