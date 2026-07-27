@@ -463,6 +463,26 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
   REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
 
+-- Schema-scoped: future functions in public — postgres (includes service_role)
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM service_role;
+
+-- Schema-scoped: future functions in public — supabase_admin (includes service_role)
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM service_role;
+
 -- Schema-scoped: future tables in public — postgres
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM PUBLIC;
@@ -503,6 +523,7 @@ DO $$
 DECLARE
   v_errors INT := 0;
   v_count  BIGINT;
+  r        RECORD;
 BEGIN
   RAISE NOTICE 'POST-MIGRATION VERIFICATION';
 
@@ -626,6 +647,24 @@ BEGIN
              WHERE grantee='authenticated' AND routine_schema='public' AND privilege_type='EXECUTE') THEN
     RAISE WARNING 'authenticated retains EXECUTE on at least one function'; v_errors := v_errors + 1;
   ELSE RAISE NOTICE '  authenticated: CANNOT execute any function'; END IF;
+
+  -- Default ACL: function EXECUTE defaults contain no client roles
+  FOR r IN
+    SELECT r.rolname AS owner, n.nspname, d.defaclacl::text AS acl
+    FROM pg_default_acl d
+    JOIN pg_namespace n ON d.defaclnamespace = n.oid
+    JOIN pg_roles r ON d.defaclrole = r.oid
+    WHERE d.defaclobjtype = 'f'
+      AND n.nspname = 'public'
+      AND r.rolname IN ('postgres','supabase_admin')
+  LOOP
+    IF r.acl LIKE '%anon=%' OR r.acl LIKE '%authenticated=%' OR r.acl LIKE '%service_role=%' THEN
+      RAISE WARNING 'Default ACL: % has client roles in public/function: %', r.owner, r.acl;
+      v_errors := v_errors + 1;
+    ELSE
+      RAISE NOTICE '  Default ACL: % has no client roles in public/function', r.owner;
+    END IF;
+  END LOOP;
 
   -- TRUNCATE revoked
   IF EXISTS (SELECT 1 FROM information_schema.role_table_grants

@@ -31,7 +31,7 @@ while ((m = dqRegex.exec(sql)) !== null) {
 // Count $fn$ tags
 const fnTags = dqTags.filter(t => t.tag === 'fn');
 const blockTags = dqTags.filter(t => t.tag === 'block');
-check(`$fn$ tags found: ${fnTags.length} (expected 10 = 5 pairs)`, fnTags.length === 10, `Found ${fnTags.length}`);
+check(`$fn$ tags found: ${fnTags.length} (expected 12 = 6 pairs)`, fnTags.length === 12, `Found ${fnTags.length}`);
 check(`$block$ tags found: ${blockTags.length} (even count = paired)`, blockTags.length % 2 === 0, `Found ${blockTags.length}`);
 
 // Verify pairing: each tag type should have even count
@@ -150,7 +150,7 @@ const doBlock = (sqlNoComments.match(/^DO\s+\$/gm) || []).length;
 check(`CREATE TABLE IF NOT EXISTS: ${createTable} (expected 17)`, createTable === 17, `Found ${createTable}`);
 check(`CREATE POLICY: ${createPolicy} (expected 38 total across all parts)`, createPolicy >= 38, `Found ${createPolicy}`);
 check(`DROP POLICY IF EXISTS: ${dropPolicy} (expected >= 53)`, dropPolicy >= 53, `Found ${dropPolicy}`);
-check(`CREATE OR REPLACE FUNCTION: ${createFunc} (expected 5)`, createFunc === 5, `Found ${createFunc}`);
+check(`CREATE OR REPLACE FUNCTION: ${createFunc} (expected 6)`, createFunc === 6, `Found ${createFunc}`);
 check(`DO blocks: ${doBlock}`, doBlock >= 18, `Found ${doBlock}`);
 
 // ─── 7. POLICY NAME INVENTORY ──────────────────────────────────
@@ -206,7 +206,7 @@ const funcDefs = [...sql.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(([^
 for (const f of funcDefs) {
   console.log(`  ${f[1]}(${f[2].trim()}) RETURNS ${f[3]}`);
 }
-check('5 function definitions found', funcDefs.length === 5, `Found ${funcDefs.length}`);
+check('6 function definitions found', funcDefs.length === 6, `Found ${funcDefs.length}`);
 
 // Check SECURITY DEFINER
 const secDefFuncs = [...sql.matchAll(/SECURITY DEFINER/g)].length;

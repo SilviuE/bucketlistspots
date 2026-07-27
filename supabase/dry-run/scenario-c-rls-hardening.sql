@@ -828,6 +828,8 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC, anon, authenticated;
 DO $block$ BEGIN
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
@@ -867,6 +869,54 @@ BEGIN
 END $block$;
 
 COMMIT;
+
+-- 4h-verify. Default ACL assertions: function EXECUTE defaults contain no client roles
+DO $block$
+DECLARE
+  v_ok INT := 0;
+  v_total INT := 0;
+  v_acl TEXT;
+  v_has_anon BOOLEAN;
+  v_has_auth BOOLEAN;
+  v_has_svc BOOLEAN;
+  rec RECORD;
+BEGIN
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'DEFAULT ACL ASSERTIONS (pg_default_acl)';
+  RAISE NOTICE '══════════════════════════════════════════';
+
+  FOR rec IN
+    SELECT rol.owner_name, n.nspname, d.defaclacl::text AS acl
+    FROM pg_default_acl d
+    JOIN pg_namespace n ON d.defaclnamespace = n.oid
+    JOIN (SELECT oid, rolname AS owner_name FROM pg_roles) rol ON d.defaclrole = rol.oid
+    WHERE d.defaclobjtype = 'f'
+      AND n.nspname = 'public'
+      AND rol.owner_name IN ('postgres','supabase_admin')
+  LOOP
+    v_acl := rec.acl;
+    v_has_anon := v_acl LIKE '%anon=%';
+    v_has_auth := v_acl LIKE '%authenticated=%';
+    v_has_svc  := v_acl LIKE '%service_role=%';
+
+    v_total := v_total + 1;
+    IF NOT v_has_anon AND NOT v_has_auth AND NOT v_has_svc THEN
+      v_ok := v_ok + 1;
+      RAISE NOTICE '  PASS: % default EXECUTE ACL has no client roles', rec.owner_name;
+    ELSE
+      RAISE WARNING '  FAIL: % default EXECUTE ACL contains % (anon=%, auth=%, svc=%)',
+        rec.owner_name, v_acl, v_has_anon, v_has_auth, v_has_svc;
+    END IF;
+  END LOOP;
+
+  IF v_total = 0 THEN
+    RAISE NOTICE '  SKIP: no pg_default_acl entries for public functions on this instance';
+  END IF;
+
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'DEFAULT ACL ASSERTIONS: %/% passed', v_ok, v_total;
+  RAISE NOTICE '══════════════════════════════════════════';
+END $block$;
 
 -- 4e-verify. Structural privilege assertions (outside transaction for safety)
 DO $block$
@@ -997,7 +1047,7 @@ END $block$;
 
 
 -- ================================================================
--- PART 5: BEHAVIORAL RLS TESTS (32 assertions)
+-- PART 5: BEHAVIORAL RLS TESTS (34 assertions)
 -- ================================================================
 DO $block$
 DECLARE
@@ -1572,6 +1622,41 @@ BEGIN
   END;
   PERFORM set_config('role', 'postgres', true);
 
+  -- ═══ CATEGORY I: DEFAULT ACL FUNCTION DENY ═══
+
+  -- TEST 33: Newly created function EXECUTE denied to anon
+  v_test_count := v_test_count + 1;
+  CREATE OR REPLACE FUNCTION public.scenario_c_test_default_acl_deny()
+  RETURNS TEXT AS $fn$ BEGIN RETURN 'ok'; END; $fn$ LANGUAGE plpgsql;
+  BEGIN
+    PERFORM set_config('role', 'anon', true);
+    PERFORM set_config('request.jwt.claims', '{"role":"anon"}', true);
+    PERFORM public.scenario_c_test_default_acl_deny();
+    v_fail_count := v_fail_count + 1;
+    RAISE WARNING '  FAIL TEST 33: Anon can execute newly created function';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_pass_count := v_pass_count + 1;
+    RAISE NOTICE '  PASS TEST 33: Newly created function blocked for anon (default ACL denied)';
+  END;
+  PERFORM set_config('role', 'postgres', true);
+
+  -- TEST 34: Newly created function EXECUTE denied to authenticated
+  v_test_count := v_test_count + 1;
+  BEGIN
+    PERFORM set_config('role', 'authenticated', true);
+    PERFORM set_config('request.jwt.claims',
+      '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
+    PERFORM set_config('request.jwt.sub', '11111111-1111-1111-1111-111111111111', true);
+    PERFORM public.scenario_c_test_default_acl_deny();
+    v_fail_count := v_fail_count + 1;
+    RAISE WARNING '  FAIL TEST 34: Authenticated can execute newly created function';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_pass_count := v_pass_count + 1;
+    RAISE NOTICE '  PASS TEST 34: Newly created function blocked for authenticated (default ACL denied)';
+  END;
+  PERFORM set_config('role', 'postgres', true);
+  DROP FUNCTION IF EXISTS public.scenario_c_test_default_acl_deny();
+
   RAISE NOTICE '══════════════════════════════════════════';
   RAISE NOTICE 'TESTS: % passed, % failed (of % total)', v_pass_count, v_fail_count, v_test_count;
   RAISE NOTICE '══════════════════════════════════════════';
@@ -1724,11 +1809,12 @@ DO $block$ BEGIN
   RAISE NOTICE 'Functions: ALL EXECUTE revoked from PUBLIC/anon/authenticated/service_role;';
   RAISE NOTICE '  3 RPCs regranted to service_role with exact pg_proc signatures.';
   RAISE NOTICE 'Default privileges: global + schema-scoped for postgres and supabase_admin.';
-  RAISE NOTICE 'Tests: 32 assertions (catalogue, users, privilege escalation, write deny,';
+  RAISE NOTICE 'Tests: 34 assertions (catalogue, users, privilege escalation, write deny,';
   RAISE NOTICE '  Netlify-only tables, sensitive columns, infrastructure, service role,';
-  RAISE NOTICE '  fallback column lists, emergency recovery, pg_proc audit).';
+  RAISE NOTICE '  fallback column lists, default ACL function deny, emergency recovery,';
+  RAISE NOTICE '  pg_proc audit).';
   RAISE NOTICE 'Cleanup: deterministic DELETE of previous test data (FK-safe order).';
-  RAISE NOTICE 'Temp objects: cleaned up (scenario_c_test_execute_deny dropped).';
+  RAISE NOTICE 'Temp objects: cleaned up (scenario_c_test_execute_deny + scenario_c_test_default_acl_deny dropped).';
   RAISE NOTICE 'Role resets: every test resets to postgres after completion.';
   RAISE NOTICE 'Idempotent: safe to run twice consecutively.';
   RAISE NOTICE 'NEXT: Run Supabase Security Advisor.';
