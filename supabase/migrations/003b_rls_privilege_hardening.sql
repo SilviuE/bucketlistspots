@@ -494,6 +494,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM authenticated;
+-- Narrowed defaults: service_role gets SELECT, INSERT, UPDATE, DELETE only (no TRUNCATE/REFERENCES/TRIGGER/MAINTAIN)
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE ALL ON TABLES FROM service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;
 
 -- Schema-scoped: future sequences in public — postgres
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
@@ -502,6 +507,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON SEQUENCES FROM anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON SEQUENCES FROM authenticated;
+-- Narrowed defaults: service_role gets USAGE, SELECT only (no UPDATE)
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE ALL ON SEQUENCES FROM service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO service_role;
 
 -- Schema-scoped: future tables in public — supabase_admin
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
@@ -691,6 +701,44 @@ BEGIN
     RAISE NOTICE '  All public functions owned by postgres';
   END IF;
 
+  -- Table default ACL: service_role must have arwd only (no TRUNCATE/REFERENCES/TRIGGER/MAINTAIN)
+  FOR r IN
+    SELECT d.defaclacl::text AS acl
+    FROM pg_default_acl d
+    JOIN pg_roles rol ON d.defaclrole = rol.oid
+    WHERE d.defaclobjtype = 'r'
+      AND d.defaclnamespace = 'public'::regnamespace
+      AND rol.rolname = 'postgres'
+  LOOP
+    IF r.acl LIKE '%service_role=arwd/%postgres%'
+       AND r.acl NOT LIKE '%service_role=arwdDxtm/%postgres%'
+       AND r.acl NOT LIKE '%anon=%' AND r.acl NOT LIKE '%authenticated=%' THEN
+      RAISE NOTICE '  Table default ACL: service_role=arwd (SELECT,INSERT,UPDATE,DELETE only)';
+    ELSE
+      RAISE WARNING 'Table default ACL unexpected: %', r.acl;
+      v_errors := v_errors + 1;
+    END IF;
+  END LOOP;
+
+  -- Sequence default ACL: service_role must have rU only (no UPDATE)
+  FOR r IN
+    SELECT d.defaclacl::text AS acl
+    FROM pg_default_acl d
+    JOIN pg_roles rol ON d.defaclrole = rol.oid
+    WHERE d.defaclobjtype = 'S'
+      AND d.defaclnamespace = 'public'::regnamespace
+      AND rol.rolname = 'postgres'
+  LOOP
+    IF r.acl LIKE '%service_role=rU/%postgres%'
+       AND r.acl NOT LIKE '%service_role=rUw/%postgres%'
+       AND r.acl NOT LIKE '%anon=%' AND r.acl NOT LIKE '%authenticated=%' THEN
+      RAISE NOTICE '  Sequence default ACL: service_role=rU (SELECT,USAGE only)';
+    ELSE
+      RAISE WARNING 'Sequence default ACL unexpected: %', r.acl;
+      v_errors := v_errors + 1;
+    END IF;
+  END LOOP;
+
   -- TRUNCATE revoked
   IF EXISTS (SELECT 1 FROM information_schema.role_table_grants
              WHERE grantee='anon' AND table_name='guides' AND table_schema='public'
@@ -716,6 +764,8 @@ DO $$ BEGIN
   RAISE NOTICE 'Functions: ALL EXECUTE revoked from PUBLIC/anon/authenticated/service_role;';
   RAISE NOTICE '  3 RPCs regranted to service_role only.';
   RAISE NOTICE 'Default privileges: postgres hard-pass, supabase_admin advisory (platform-managed).';
+  RAISE NOTICE '  Table defaults: service_role=arwd (SELECT,INSERT,UPDATE,DELETE only).';
+  RAISE NOTICE '  Sequence defaults: service_role=rU (SELECT,USAGE only).';
   RAISE NOTICE 'Function ownership: all public functions verified owned by postgres.';
   RAISE NOTICE 'Application functions MUST be created by postgres, not supabase_admin.';
   RAISE NOTICE 'Publication: experiences/destinations gated by is_published = true (RLS).';

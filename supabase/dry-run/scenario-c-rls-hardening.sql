@@ -836,7 +836,11 @@ DO $block$ BEGIN
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO service_role; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated; EXCEPTION WHEN OTHERS THEN NULL; END;
 END $block$;
@@ -990,6 +994,82 @@ BEGIN
   END IF;
 
   RAISE NOTICE '──────────────────────────────────────────';
+
+  -- ═══ Table default ACL catalogue assertions ═══
+  RAISE NOTICE '──────────────────────────────────────────';
+  RAISE NOTICE 'TABLE DEFAULT ACL CATALOGUE ASSERTIONS';
+  RAISE NOTICE '──────────────────────────────────────────';
+
+  FOR rec IN
+    SELECT rol.owner_name, d.defaclacl::text AS acl
+    FROM pg_default_acl d
+    JOIN (SELECT oid, rolname AS owner_name FROM pg_roles) rol ON d.defaclrole = rol.oid
+    WHERE d.defaclobjtype = 'r'
+      AND d.defaclnamespace = 'public'::regnamespace
+      AND rol.owner_name IN ('postgres','supabase_admin')
+  LOOP
+    IF rec.owner_name = 'postgres' THEN
+      v_total := v_total + 1;
+      IF rec.acl LIKE '%service_role=arwd/%postgres%'
+         AND rec.acl NOT LIKE '%service_role=arwdDxtm/%postgres%' THEN
+        v_ok := v_ok + 1;
+        RAISE NOTICE '  PASS: postgres table default ACL — service_role=arwd (SELECT,INSERT,UPDATE,DELETE)';
+      ELSE
+        RAISE WARNING '  FAIL: postgres table default ACL unexpected: %', rec.acl;
+      END IF;
+      -- Verify no anon/authenticated in table defaults
+      IF rec.acl LIKE '%anon=%' OR rec.acl LIKE '%authenticated=%' THEN
+        RAISE WARNING '  FAIL: postgres table default ACL contains anon or authenticated: %', rec.acl;
+      ELSE
+        v_ok := v_ok + 1;
+        v_total := v_total + 1;
+        RAISE NOTICE '  PASS: postgres table default ACL has no anon/authenticated';
+      END IF;
+    ELSE
+      v_advisory := v_advisory + 1;
+      RAISE NOTICE '  ADVISORY: supabase_admin table default ACL (platform-managed): %', rec.acl;
+    END IF;
+  END LOOP;
+
+  -- ═══ Sequence default ACL catalogue assertions ═══
+  RAISE NOTICE '──────────────────────────────────────────';
+  RAISE NOTICE 'SEQUENCE DEFAULT ACL CATALOGUE ASSERTIONS';
+  RAISE NOTICE '──────────────────────────────────────────';
+
+  FOR rec IN
+    SELECT rol.owner_name, d.defaclacl::text AS acl
+    FROM pg_default_acl d
+    JOIN (SELECT oid, rolname AS owner_name FROM pg_roles) rol ON d.defaclrole = rol.oid
+    WHERE d.defaclobjtype = 'S'
+      AND d.defaclnamespace = 'public'::regnamespace
+      AND rol.owner_name IN ('postgres','supabase_admin')
+  LOOP
+    IF rec.owner_name = 'postgres' THEN
+      v_total := v_total + 1;
+      IF rec.acl LIKE '%service_role=rU/%postgres%'
+         AND rec.acl NOT LIKE '%service_role=rUw/%postgres%' THEN
+        v_ok := v_ok + 1;
+        RAISE NOTICE '  PASS: postgres sequence default ACL — service_role=rU (SELECT,USAGE)';
+      ELSE
+        RAISE WARNING '  FAIL: postgres sequence default ACL unexpected: %', rec.acl;
+      END IF;
+      -- Verify no anon/authenticated in sequence defaults
+      IF rec.acl LIKE '%anon=%' OR rec.acl LIKE '%authenticated=%' THEN
+        RAISE WARNING '  FAIL: postgres sequence default ACL contains anon or authenticated: %', rec.acl;
+      ELSE
+        v_ok := v_ok + 1;
+        v_total := v_total + 1;
+        RAISE NOTICE '  PASS: postgres sequence default ACL has no anon/authenticated';
+      END IF;
+    ELSE
+      v_advisory := v_advisory + 1;
+      RAISE NOTICE '  ADVISORY: supabase_admin sequence default ACL (platform-managed): %', rec.acl;
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'DEFAULT ACL ASSERTIONS: %/% hard-pass, %/% advisory', v_ok, v_total, v_advisory, v_total;
+  RAISE NOTICE '══════════════════════════════════════════';
 END $block$;
 
 -- 4e-verify. Structural privilege assertions (outside transaction for safety)
@@ -1731,6 +1811,67 @@ BEGIN
   PERFORM set_config('role', 'postgres', true);
   DROP FUNCTION IF EXISTS public.scenario_c_test_default_acl_deny();
 
+  -- ═══ CATEGORY J: DEFAULT ACL TABLE/SEQUENCE PRIVILEGES ═══
+
+  -- TEST 35: Newly created table — service_role gets arwd only (no TRUNCATE/REFERENCES/TRIGGER/MAINTAIN)
+  v_test_count := v_test_count + 1;
+  BEGIN
+    CREATE TABLE public.scenario_c_test_acl_table (id SERIAL PRIMARY KEY, val TEXT);
+    -- service_role must have SELECT, INSERT, UPDATE, DELETE
+    IF has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'SELECT')
+       AND has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'INSERT')
+       AND has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'UPDATE')
+       AND has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'DELETE')
+       AND NOT has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'TRUNCATE')
+       AND NOT has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'REFERENCES')
+       AND NOT has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'TRIGGER') THEN
+      v_pass_count := v_pass_count + 1;
+      RAISE NOTICE '  PASS TEST 35: Table default ACL = arwd (SELECT,INSERT,UPDATE,DELETE only)';
+    ELSE
+      v_fail_count := v_fail_count + 1;
+      RAISE WARNING '  FAIL TEST 35: Table default ACL unexpected';
+      RAISE WARNING '    SELECT=%, INSERT=%, UPDATE=%, DELETE=%, TRUNCATE=%, REFERENCES=%, TRIGGER=%',
+        has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'SELECT'),
+        has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'INSERT'),
+        has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'UPDATE'),
+        has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'DELETE'),
+        has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'TRUNCATE'),
+        has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'REFERENCES'),
+        has_table_privilege('service_role', 'public.scenario_c_test_acl_table', 'TRIGGER');
+    END IF;
+    DROP TABLE IF EXISTS public.scenario_c_test_acl_table;
+  EXCEPTION WHEN OTHERS THEN
+    v_fail_count := v_fail_count + 1;
+    RAISE WARNING '  FAIL TEST 35: %', SQLERRM;
+    DROP TABLE IF EXISTS public.scenario_c_test_acl_table;
+  END;
+  PERFORM set_config('role', 'postgres', true);
+
+  -- TEST 36: Newly created sequence — service_role gets rU only (no UPDATE)
+  v_test_count := v_test_count + 1;
+  BEGIN
+    CREATE SEQUENCE public.scenario_c_test_acl_seq;
+    IF has_sequence_privilege('service_role', 'public.scenario_c_test_acl_seq', 'USAGE')
+       AND has_sequence_privilege('service_role', 'public.scenario_c_test_acl_seq', 'SELECT')
+       AND NOT has_sequence_privilege('service_role', 'public.scenario_c_test_acl_seq', 'UPDATE') THEN
+      v_pass_count := v_pass_count + 1;
+      RAISE NOTICE '  PASS TEST 36: Sequence default ACL = rU (SELECT,USAGE only)';
+    ELSE
+      v_fail_count := v_fail_count + 1;
+      RAISE WARNING '  FAIL TEST 36: Sequence default ACL unexpected';
+      RAISE WARNING '    USAGE=%, SELECT=%, UPDATE=%',
+        has_sequence_privilege('service_role', 'public.scenario_c_test_acl_seq', 'USAGE'),
+        has_sequence_privilege('service_role', 'public.scenario_c_test_acl_seq', 'SELECT'),
+        has_sequence_privilege('service_role', 'public.scenario_c_test_acl_seq', 'UPDATE');
+    END IF;
+    DROP SEQUENCE IF EXISTS public.scenario_c_test_acl_seq;
+  EXCEPTION WHEN OTHERS THEN
+    v_fail_count := v_fail_count + 1;
+    RAISE WARNING '  FAIL TEST 36: %', SQLERRM;
+    DROP SEQUENCE IF EXISTS public.scenario_c_test_acl_seq;
+  END;
+  PERFORM set_config('role', 'postgres', true);
+
   RAISE NOTICE '══════════════════════════════════════════';
   RAISE NOTICE 'TESTS: % passed, % failed (of % total)', v_pass_count, v_fail_count, v_test_count;
   RAISE NOTICE '══════════════════════════════════════════';
@@ -1803,6 +1944,38 @@ BEGIN
     ON public.destinations FOR SELECT
     USING (is_published = true);
   RAISE NOTICE '  Restored 5 hardened policies';
+
+  -- Verify table/sequence default ACLs are preserved (emergency recovery must never restore arwdDxtm or rwU)
+  DECLARE r RECORD; v_acl_pass BOOLEAN;
+  BEGIN
+    FOR r IN
+      SELECT rol.rolname AS owner_name, d.defaclobjtype AS obj_type, d.defaclacl::text AS acl
+      FROM pg_default_acl d
+      JOIN pg_roles rol ON d.defaclrole = rol.oid
+      WHERE d.defaclnamespace = 'public'::regnamespace
+        AND rol.rolname = 'postgres'
+    LOOP
+      v_acl_pass := true;
+      IF r.obj_type = 'r' AND r.acl LIKE '%service_role=%' THEN
+        IF r.acl NOT LIKE '%service_role=arwd/%postgres%'
+           OR r.acl LIKE '%service_role=arwdDxtm/%postgres%' THEN
+          v_acl_pass := false;
+        END IF;
+      ELSIF r.obj_type = 'S' AND r.acl LIKE '%service_role=%' THEN
+        IF r.acl NOT LIKE '%service_role=rU/%postgres%'
+           OR r.acl LIKE '%service_role=rUw/%postgres%' THEN
+          v_acl_pass := false;
+        END IF;
+      END IF;
+      IF NOT v_acl_pass THEN
+        RAISE WARNING '  EMERGENCY RECOVERY: narrowed default ACL lost for %: %',
+          CASE r.obj_type WHEN 'r' THEN 'tables' WHEN 'S' THEN 'sequences' END, r.acl;
+      ELSE
+        RAISE NOTICE '  EMERGENCY RECOVERY: narrowed default ACL preserved for %',
+          CASE r.obj_type WHEN 'r' THEN 'tables' WHEN 'S' THEN 'sequences' END;
+      END IF;
+    END LOOP;
+  END;
 
   -- Verify column-level privilege model is intact (GRANTs not touched by recovery)
   IF NOT has_any_column_privilege('anon', 'public.guides', 'SELECT')
@@ -1884,11 +2057,13 @@ DO $block$ BEGIN
   RAISE NOTICE '  3 RPCs regranted to service_role with exact pg_proc signatures.';
   RAISE NOTICE '  Default privileges: postgres hard-pass, supabase_admin advisory (platform-managed).';
   RAISE NOTICE '  Function ownership: all public functions verified owned by postgres.';
+  RAISE NOTICE '  Table defaults: service_role=arwd (SELECT,INSERT,UPDATE,DELETE only).';
+  RAISE NOTICE '  Sequence defaults: service_role=rU (SELECT,USAGE only).';
   RAISE NOTICE '  Application functions MUST be created by postgres, not supabase_admin.';
-  RAISE NOTICE 'Tests: 34 assertions (catalogue, users, privilege escalation, write deny,';
+  RAISE NOTICE 'Tests: 36 assertions (catalogue, users, privilege escalation, write deny,';
   RAISE NOTICE '  Netlify-only tables, sensitive columns, infrastructure, service role,';
   RAISE NOTICE '  fallback column lists, default ACL function deny, emergency recovery,';
-  RAISE NOTICE '  pg_proc audit).';
+  RAISE NOTICE '  pg_proc audit, default ACL table/sequence privileges).';
   RAISE NOTICE 'Cleanup: deterministic DELETE of previous test data (FK-safe order).';
   RAISE NOTICE 'Temp objects: cleaned up (scenario_c_test_execute_deny + scenario_c_test_default_acl_deny dropped).';
   RAISE NOTICE 'Role resets: every test resets to postgres after completion.';
