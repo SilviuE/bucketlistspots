@@ -136,6 +136,23 @@ BEGIN
     RAISE WARNING 'authenticated CANNOT update users.name'; v_errors := v_errors + 1;
   END IF;
 
+  -- Verify column-level model: anon has NO access to users
+  IF NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
+                 WHERE grantee='anon' AND table_name='users' AND privilege_type='SELECT') THEN
+    RAISE NOTICE '  anon: CANNOT select users (column-level model intact)';
+  ELSE
+    RAISE WARNING 'anon CAN select users — column-level model broken'; v_errors := v_errors + 1;
+  END IF;
+
+  -- Verify column-level model: authenticated has SELECT on 6 users columns only
+  IF EXISTS (SELECT 1 FROM information_schema.role_column_grants
+             WHERE grantee='authenticated' AND table_name='users'
+             AND privilege_type='SELECT' AND column_name='referral_code') THEN
+    RAISE WARNING 'authenticated can SELECT users.referral_code — column-level model broken'; v_errors := v_errors + 1;
+  ELSE
+    RAISE NOTICE '  authenticated: CANNOT select users.referral_code (column-level model intact)';
+  END IF;
+
   IF v_errors = 0 THEN
     RAISE NOTICE 'RECOVERY: ALL CHECKS PASSED';
   ELSE

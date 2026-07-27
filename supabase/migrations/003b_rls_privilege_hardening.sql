@@ -263,6 +263,12 @@ END $$;
 -- ================================================================
 -- SECTION 6: REVOKE UNUSED PRIVILEGES
 -- ================================================================
+-- CRITICAL: Revoke ALL table-level privileges from client roles first.
+-- Supabase defaults grant broad table-level SELECT to anon/authenticated.
+-- Column-level GRANTs in Section 7 establish the exact access model.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM authenticated;
 REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM PUBLIC;
 REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM anon;
 REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM authenticated;

@@ -689,11 +689,18 @@ BEGIN
   RAISE NOTICE 'Verified: 0 policies after explicit legacy drops';
 END $block$;
 
--- 4d. Revoke unused privileges
+-- 4d. Revoke ALL table-level privileges from client roles
+-- CRITICAL: Part 1g grants broad table-level SELECT to simulate Supabase defaults.
+-- This block strips ALL table-level privileges so column-level GRANTs in 4e
+-- establish the exact access model. Belt-and-suspenders specific REVOKEs follow.
 DO $block$ BEGIN
+  BEGIN REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;         EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;           EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN REVOKE ALL ON ALL TABLES IN SCHEMA public FROM authenticated;  EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM PUBLIC;         EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM anon;           EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN REVOKE TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public FROM authenticated;  EXCEPTION WHEN OTHERS THEN NULL; END;
+  RAISE NOTICE 'Revoked ALL table-level privileges from PUBLIC, anon, authenticated';
 END $block$;
 
 DO $block$ BEGIN
@@ -860,6 +867,127 @@ BEGIN
 END $block$;
 
 COMMIT;
+
+-- 4e-verify. Structural privilege assertions (outside transaction for safety)
+DO $block$
+DECLARE
+  v_ok INT := 0;
+  v_total INT := 0;
+  r RECORD;
+BEGIN
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'STRUCTURAL PRIVILEGE ASSERTIONS';
+  RAISE NOTICE '══════════════════════════════════════════';
+
+  -- anon: catalogue tables — column-level SELECT allows access
+  v_total := v_total + 1;
+  IF has_any_column_privilege('anon', 'public.guides', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: anon has SELECT on guides';
+  ELSE RAISE WARNING '  FAIL: anon lacks SELECT on guides'; END IF;
+
+  v_total := v_total + 1;
+  IF has_any_column_privilege('anon', 'public.experiences', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: anon has SELECT on experiences';
+  ELSE RAISE WARNING '  FAIL: anon lacks SELECT on experiences'; END IF;
+
+  v_total := v_total + 1;
+  IF has_any_column_privilege('anon', 'public.destinations', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: anon has SELECT on destinations';
+  ELSE RAISE WARNING '  FAIL: anon lacks SELECT on destinations'; END IF;
+
+  -- anon: users — NO access
+  v_total := v_total + 1;
+  IF NOT has_any_column_privilege('anon', 'public.users', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: anon has NO SELECT on users';
+  ELSE RAISE WARNING '  FAIL: anon has SELECT on users (should not)'; END IF;
+
+  -- anon: all 13 non-catalogue tables — NO access
+  FOR r IN
+    SELECT unnest(ARRAY[
+      'guide_applications','ambassador_applications','posts','fundraising_pages',
+      'testimonials','destination_charities','claims_registry','platform_config',
+      'transactions','webhook_event_inbox','booking_confirmations','payment_reports',
+      'terms_acceptance'
+    ]) AS t
+  LOOP
+    v_total := v_total + 1;
+    IF NOT has_any_column_privilege('anon', 'public.' || r.t, 'SELECT') THEN
+      v_ok := v_ok + 1;
+    ELSE RAISE WARNING '  FAIL: anon has SELECT on % (should not)', r.t; END IF;
+  END LOOP;
+  RAISE NOTICE '  PASS: anon has NO SELECT on 13 non-catalogue tables';
+
+  -- authenticated: users — 6 allowed columns
+  v_total := v_total + 1;
+  IF has_column_privilege('authenticated', 'public.users', 'id', 'SELECT')
+     AND has_column_privilege('authenticated', 'public.users', 'email', 'SELECT')
+     AND has_column_privilege('authenticated', 'public.users', 'name', 'SELECT')
+     AND has_column_privilege('authenticated', 'public.users', 'avatar', 'SELECT')
+     AND has_column_privilege('authenticated', 'public.users', 'role', 'SELECT')
+     AND has_column_privilege('authenticated', 'public.users', 'created_at', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: authenticated has SELECT on users 6 allowed columns';
+  ELSE RAISE WARNING '  FAIL: authenticated missing some allowed users columns'; END IF;
+
+  -- authenticated: users — sensitive columns NOT accessible
+  v_total := v_total + 1;
+  IF NOT has_column_privilege('authenticated', 'public.users', 'referral_code', 'SELECT')
+     AND NOT has_column_privilege('authenticated', 'public.users', 'bls_points_balance', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: authenticated has NO SELECT on users.referral_code, bls_points_balance';
+  ELSE RAISE WARNING '  FAIL: authenticated can read sensitive users columns'; END IF;
+
+  -- authenticated: users — UPDATE only name + avatar
+  v_total := v_total + 1;
+  IF has_column_privilege('authenticated', 'public.users', 'name', 'UPDATE')
+     AND has_column_privilege('authenticated', 'public.users', 'avatar', 'UPDATE')
+     AND NOT has_column_privilege('authenticated', 'public.users', 'role', 'UPDATE')
+     AND NOT has_column_privilege('authenticated', 'public.users', 'referral_code', 'UPDATE')
+     AND NOT has_column_privilege('authenticated', 'public.users', 'bls_points_balance', 'UPDATE') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: authenticated UPDATE restricted to users.name, users.avatar';
+  ELSE RAISE WARNING '  FAIL: authenticated UPDATE model incorrect on users'; END IF;
+
+  -- authenticated: guides/experiences/destinations — SELECT allowed
+  v_total := v_total + 1;
+  IF has_any_column_privilege('authenticated', 'public.guides', 'SELECT')
+     AND has_any_column_privilege('authenticated', 'public.experiences', 'SELECT')
+     AND has_any_column_privilege('authenticated', 'public.destinations', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: authenticated has SELECT on guides, experiences, destinations';
+  ELSE RAISE WARNING '  FAIL: authenticated missing catalogue SELECT'; END IF;
+
+  -- authenticated: platform_config + transactions — SELECT allowed
+  v_total := v_total + 1;
+  IF has_any_column_privilege('authenticated', 'public.platform_config', 'SELECT')
+     AND has_any_column_privilege('authenticated', 'public.transactions', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: authenticated has SELECT on platform_config, transactions';
+  ELSE RAISE WARNING '  FAIL: authenticated missing platform_config/transactions SELECT'; END IF;
+
+  -- authenticated: 11 remaining tables — NO access
+  v_total := v_total + 1;
+  IF NOT has_any_column_privilege('authenticated', 'public.guide_applications', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.ambassador_applications', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.posts', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.fundraising_pages', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.testimonials', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.destination_charities', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.claims_registry', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.webhook_event_inbox', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.booking_confirmations', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.payment_reports', 'SELECT')
+     AND NOT has_any_column_privilege('authenticated', 'public.terms_acceptance', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: authenticated has NO SELECT on 11 non-catalogue tables';
+  ELSE RAISE WARNING '  FAIL: authenticated has unexpected SELECT on non-catalogue tables'; END IF;
+
+  -- service_role: full access on all tables
+  v_total := v_total + 1;
+  IF has_any_column_privilege('service_role', 'public.users', 'SELECT')
+     AND has_any_column_privilege('service_role', 'public.guide_applications', 'SELECT')
+     AND has_any_column_privilege('service_role', 'public.platform_config', 'SELECT') THEN
+    v_ok := v_ok + 1; RAISE NOTICE '  PASS: service_role has full access on all tables';
+  ELSE RAISE WARNING '  FAIL: service_role lacks full access'; END IF;
+
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'PRIVILEGE ASSERTIONS: %/% passed', v_ok, v_total;
+  RAISE NOTICE '══════════════════════════════════════════';
+END $block$;
 
 DO $block$ BEGIN
   RAISE NOTICE '══════════════════════════════════════════';
@@ -1516,6 +1644,19 @@ BEGIN
     ON public.destinations FOR SELECT
     USING (is_published = true);
   RAISE NOTICE '  Restored 5 hardened policies';
+
+  -- Verify column-level privilege model is intact (GRANTs not touched by recovery)
+  IF NOT has_any_column_privilege('anon', 'public.guides', 'SELECT')
+     OR NOT has_any_column_privilege('anon', 'public.experiences', 'SELECT')
+     OR NOT has_any_column_privilege('anon', 'public.destinations', 'SELECT')
+     OR has_any_column_privilege('anon', 'public.users', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'public.users', 'email', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.users', 'referral_code', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'public.users', 'name', 'UPDATE') THEN
+    RAISE WARNING '  EMERGENCY RECOVERY: column-level privilege model broken after recovery';
+  ELSE
+    RAISE NOTICE '  EMERGENCY RECOVERY: column-level privilege model intact after recovery';
+  END IF;
 
   -- Verify exactly 5 hardened policies remain
   SELECT count(*) INTO v_count FROM pg_policies WHERE schemaname = 'public';
