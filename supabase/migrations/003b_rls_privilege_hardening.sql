@@ -474,6 +474,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM service_role;
 
 -- Schema-scoped: future functions in public — supabase_admin (includes service_role)
+-- NOTE: On hosted Supabase, supabase_admin is platform-managed. These ALTER DEFAULT PRIVILEGES
+-- may silently fail. This is expected — Supabase retains platform defaults for supabase_admin.
+-- The postgres role defaults are under application control and must pass hard assertions.
+-- All application functions MUST be created by postgres, not supabase_admin.
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
@@ -648,23 +652,44 @@ BEGIN
     RAISE WARNING 'authenticated retains EXECUTE on at least one function'; v_errors := v_errors + 1;
   ELSE RAISE NOTICE '  authenticated: CANNOT execute any function'; END IF;
 
-  -- Default ACL: function EXECUTE defaults contain no client roles
+  -- Default ACL: postgres function EXECUTE defaults must contain no client roles (HARD-FAIL)
+  -- supabase_admin defaults: ADVISORY only (platform-managed on hosted Supabase)
   FOR r IN
-    SELECT r.rolname AS owner, n.nspname, d.defaclacl::text AS acl
+    SELECT rolname AS owner, d.defaclacl::text AS acl
     FROM pg_default_acl d
-    JOIN pg_namespace n ON d.defaclnamespace = n.oid
     JOIN pg_roles r ON d.defaclrole = r.oid
     WHERE d.defaclobjtype = 'f'
-      AND n.nspname = 'public'
+      AND d.defaclnamespace = 'public'::regnamespace
       AND r.rolname IN ('postgres','supabase_admin')
   LOOP
-    IF r.acl LIKE '%anon=%' OR r.acl LIKE '%authenticated=%' OR r.acl LIKE '%service_role=%' THEN
-      RAISE WARNING 'Default ACL: % has client roles in public/function: %', r.owner, r.acl;
-      v_errors := v_errors + 1;
+    IF r.owner = 'postgres' THEN
+      IF r.acl LIKE '%anon=%' OR r.acl LIKE '%authenticated=%' OR r.acl LIKE '%service_role=%' THEN
+        RAISE WARNING 'Default ACL: postgres has client roles in public/function: %', r.acl;
+        v_errors := v_errors + 1;
+      ELSE
+        RAISE NOTICE '  Default ACL: postgres has no client roles in public/function';
+      END IF;
     ELSE
-      RAISE NOTICE '  Default ACL: % has no client roles in public/function', r.owner;
+      -- supabase_admin: advisory only
+      IF r.acl LIKE '%anon=%' OR r.acl LIKE '%authenticated=%' OR r.acl LIKE '%service_role=%' THEN
+        RAISE NOTICE '  ADVISORY: supabase_admin default ACL retains client roles (platform-managed): %', r.acl;
+      ELSE
+        RAISE NOTICE '  Default ACL: supabase_admin has no client roles in public/function';
+      END IF;
     END IF;
   END LOOP;
+
+  -- Function ownership: all public functions must be owned by postgres
+  SELECT count(*) INTO v_count FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    JOIN pg_roles r ON p.proowner = r.oid
+    WHERE n.nspname = 'public' AND p.prokind = 'f' AND r.rolname != 'postgres';
+  IF v_count > 0 THEN
+    RAISE WARNING 'Function ownership: % public functions not owned by postgres', v_count;
+    v_errors := v_errors + 1;
+  ELSE
+    RAISE NOTICE '  All public functions owned by postgres';
+  END IF;
 
   -- TRUNCATE revoked
   IF EXISTS (SELECT 1 FROM information_schema.role_table_grants
@@ -690,7 +715,9 @@ DO $$ BEGIN
   RAISE NOTICE '  public.experiences, public.destinations.';
   RAISE NOTICE 'Functions: ALL EXECUTE revoked from PUBLIC/anon/authenticated/service_role;';
   RAISE NOTICE '  3 RPCs regranted to service_role only.';
-  RAISE NOTICE 'Default privileges: global + schema-scoped for postgres and supabase_admin.';
+  RAISE NOTICE 'Default privileges: postgres hard-pass, supabase_admin advisory (platform-managed).';
+  RAISE NOTICE 'Function ownership: all public functions verified owned by postgres.';
+  RAISE NOTICE 'Application functions MUST be created by postgres, not supabase_admin.';
   RAISE NOTICE 'Publication: experiences/destinations gated by is_published = true (RLS).';
 END $$;
 
