@@ -76,6 +76,15 @@ STRIPE_SECRET_KEY            = <staging sk_test_… (same test key OK)>
 STRIPE_WEBHOOK_SECRET        = <staging whsec_… from Stripe dashboard, test-mode endpoint below>
 ```
 
+**Stripe vars are NOT build-time mandatory.** The Vite build never reads them (`src/` has no
+`process.env` references), so the staging preview deploys and serves fine with no Stripe values
+set. If `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` are unset at runtime, the affected endpoints
+fail safely:
+- `POST /api/create-checkout` and `POST /api/confirm-payment` → `503 {"error":"Stripe not configured in this environment"}` (guards before `Stripe()` construction).
+- `POST /webhooks/stripe` → `503 {"error":"Webhook not configured"}` (secret checked before signature verification).
+Postpone both Stripe vars until the test-mode sandbox is prepared; the booking flow will simply
+return 503 instead of crashing while unconfigured.
+
 Reference: https://docs.netlify.com/environment-variables/overview/ — scope a variable to
 "Deploy contexts" and choose "Branch" with value `review/*`.
 

@@ -45,13 +45,18 @@ function json(body, status = 200) {
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
-  const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const secretKey = process.env.STRIPE_SECRET_KEY;
 
   if (!webhookSecret || webhookSecret === 'whsec_REPLACE_ME_AFTER_STRIPE_DASHBOARD_CONFIGURATION') {
     console.error('[Webhook] STRIPE_WEBHOOK_SECRET not configured');
-    return json({ error: 'Webhook not configured' }, 500);
+    return json({ error: 'Webhook not configured' }, 503);
   }
+  if (!secretKey || (secretKey.startsWith('sk_test_') === false && secretKey.startsWith('sk_live_') === false)) {
+    console.error('[Webhook] STRIPE_SECRET_KEY not configured');
+    return json({ error: 'Stripe not configured' }, 503);
+  }
+  const stripe = Stripe(secretKey);
 
   // ─── STEP 1: Verify Stripe signature (mandatory) ─────────────────
   let stripeEvent;

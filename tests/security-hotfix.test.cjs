@@ -275,6 +275,37 @@ test('api.cjs imports authenticate functions from auth.cjs', () => {
   assert.ok(src.includes('authenticateGuideOwner'), 'Must import authenticateGuideOwner');
 });
 
+test('api.cjs guards Stripe handlers when STRIPE_SECRET_KEY is unset (503, safe)', () => {
+  const src = read('api.cjs');
+  const nonComment = src.split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+  // Both Stripe-dependent handlers must fail safely with 503 before Stripe() construction.
+  assert.ok(
+    nonComment.includes("'Stripe not configured in this environment'"),
+    'api.cjs must return a clear 503 when STRIPE_SECRET_KEY is missing/unsupported'
+  );
+  assert.ok(
+    nonComment.includes('process.env.STRIPE_SECRET_KEY') && nonComment.includes('sk_test_'),
+    'api.cjs must validate the Stripe key prefix (sk_test_/sk_live_)'
+  );
+  assert.ok(
+    (nonComment.match(/const stripe = Stripe\(/g) || []).length <= 2,
+    'Stripe() must only be constructed after the unconfigured guard'
+  );
+});
+
+test('webhook-stripe.cjs checks secrets BEFORE Stripe() construction (503, safe)', () => {
+  const src = read('webhook-stripe.cjs');
+  const stripeIdx = src.indexOf('const stripe = Stripe');
+  const secretIdx = src.indexOf('STRIPE_WEBHOOK_SECRET not configured');
+  assert.ok(stripeIdx !== -1 && secretIdx !== -1, 'Both guard and construction must exist');
+  assert.ok(
+    secretIdx < stripeIdx,
+    'STRIPE_WEBHOOK_SECRET/STRIPE_SECRET_KEY guards must run before Stripe() construction'
+  );
+  assert.ok(src.includes('Webhook not configured'), 'Webhook unconfigured message must exist');
+  assert.ok(src.includes('sk_test_'), 'Webhook must validate key prefix');
+});
+
 // ─── 7. Code integrity: guide-profile.cjs ──────────────────────────────
 console.log('\n7. Code integrity — guide-profile.cjs:');
 

@@ -222,6 +222,9 @@ async function calculateBookingPrice({ tripPrice, currency, travelers, referralC
 async function handleStripe(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
+    if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY.startsWith('sk_live_') === false && process.env.STRIPE_SECRET_KEY.startsWith('sk_test_') === false) {
+      return json({ error: 'Stripe not configured in this environment' }, 503);
+    }
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
     const { routeName, guideId, travelers, guestName, guestEmail, date, currency, referralCode, porterTraining, termsAccepted } = reqBody(event);
     const origin = event.headers.origin || event.headers.host || 'https://bucketlistspots.com';
@@ -416,6 +419,9 @@ async function handleValidateReferral(event) {
 async function handleConfirmPayment(event) {
   if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
   try {
+    if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY.startsWith('sk_live_') === false && process.env.STRIPE_SECRET_KEY.startsWith('sk_test_') === false) {
+      return json({ error: 'Stripe not configured in this environment' }, 503);
+    }
     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
     const { sessionId } = reqBody(event);
     if (!sessionId) return json({ error: 'Missing session_id' }, 400);
