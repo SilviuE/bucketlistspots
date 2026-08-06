@@ -39,6 +39,42 @@ CREATE TABLE IF NOT EXISTS public.schema_migrations (
 );
 REVOKE ALL ON public.schema_migrations FROM anon, authenticated, PUBLIC, service_role;
 
+-- ================================================================
+-- Structural validation (same as 003b — abort if incompatible)
+-- ================================================================
+DO $struct$
+DECLARE
+  _missing TEXT[];
+  _bad_grants TEXT[];
+BEGIN
+  SELECT array_agg(e.col) INTO _missing
+  FROM (SELECT unnest(ARRAY['version','name','applied_at','checksum']) AS col) e
+  WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.table_name = 'schema_migrations'
+      AND c.column_name = e.col
+  );
+
+  IF _missing IS NOT NULL AND array_length(_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: missing columns: %',
+      array_to_string(_missing, ', ');
+  END IF;
+
+  SELECT array_agg(g.grantee || ':' || g.privilege_type) INTO _bad_grants
+  FROM information_schema.role_table_grants g
+  WHERE g.table_schema = 'public'
+    AND g.table_name = 'schema_migrations'
+    AND g.grantee IN ('anon', 'authenticated', 'PUBLIC', 'service_role');
+
+  IF _bad_grants IS NOT NULL AND array_length(_bad_grants, 1) > 0 THEN
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS GRANT FAILURE: runtime roles have access: %',
+      array_to_string(_bad_grants, ', ');
+  END IF;
+
+  RAISE NOTICE 'schema_migrations structure validated: 4 columns, no runtime-role grants.';
+END $struct$;
+
 DO $guard$
 DECLARE
   _expected TEXT := 'E31D5DF971EE776BD7126EB12C65827DBFD374AA3C8D5C79725DF64C63DE6543';

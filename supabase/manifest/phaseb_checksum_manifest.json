@@ -1,0 +1,62 @@
+{
+  "commit": "acfc4b09d25d43183c79f3e8c0eb6125e8686671",
+  "branch": "review/terms-sections-6-7",
+  "generated_at": "2026-08-06T18:45:00+01:00",
+  "generated_by": "Get-FileHash -Algorithm SHA256",
+  "files": [
+    {
+      "path": "supabase/migrations/0000_core_schema.sql",
+      "sha256": "3E8A31316BB9CD90F3921427BE4295AA5071532AB3D925CA5125C406A3CD9F9A",
+      "bytes": 32999,
+      "role": "fresh-install baseline schema — never run on production"
+    },
+    {
+      "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
+      "sha256": "AE3CFD570A9779D5F5B2BB3F34AA0DD1A7A7E60D9AF5FB453E3D574CA92730E6",
+      "bytes": 43793,
+      "role": "RLS privilege hardening — fresh and upgrade paths"
+    },
+    {
+      "path": "supabase/migrations/004_account_suspension.sql",
+      "sha256": "3180C248898F0FC689417877597CF768F6A95EF254A9F51D2B4F21B80AA5920E",
+      "bytes": 17916,
+      "role": "account suspension + audit trail"
+    },
+    {
+      "path": "supabase/seed/staging_seed.sql",
+      "sha256": "8C53C3342135858311B8A3F8B12AA0A315FB0FC1DEBEDFFB4FFAB0836FA25940",
+      "bytes": 7454,
+      "role": "staging-only test data seed"
+    },
+    {
+      "path": "supabase/preflight/production_preflight.sql",
+      "sha256": "E2E442B56BDC829BF8DD2D6FA679653FA43D440FD88DF0AD8609201717B639F2",
+      "bytes": 16760,
+      "role": "production read-only preflight/reconciliation"
+    },
+    {
+      "path": "supabase/test/phaseb_test_harness.sql",
+      "sha256": "CB082024128F08FB764CF7BEA5DD1788EE45A602D42FA28978687C6B88FD610F",
+      "bytes": 32708,
+      "role": "disposable DB test harness"
+    },
+    {
+      "path": "supabase/docs/checksum_explanation.md",
+      "sha256": "16FC14CACD5A9096F91091598A4E63335B87311C7835F344D107DF27EB05FFF6",
+      "bytes": 4945,
+      "role": "embedded-vs-full-file checksum documentation"
+    },
+    {
+      "path": "supabase/runbooks/fresh_staging_installation.md",
+      "sha256": "561225F7FFC82B0DFD0B5A90CA3724C1F7158B777D80870928F9EF556C8887CC",
+      "bytes": 6188,
+      "role": "fresh staging installation runbook"
+    },
+    {
+      "path": "supabase/runbooks/production_upgrade.md",
+      "sha256": "6BF56A2594778764C819236D2C5E398B3172E133B8E4FCF5D1BDA83663CCA81F",
+      "bytes": 6695,
+      "role": "production upgrade runbook"
+    }
+  ]
+}

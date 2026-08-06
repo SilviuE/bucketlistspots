@@ -37,6 +37,49 @@ CREATE TABLE IF NOT EXISTS public.schema_migrations (
 );
 REVOKE ALL ON public.schema_migrations FROM anon, authenticated, PUBLIC, service_role;
 
+-- ================================================================
+-- Structural validation: schema_migrations must have the expected
+-- columns and no runtime-role grants. Abort if incompatible.
+-- ================================================================
+DO $struct$
+DECLARE
+  _col RECORD;
+  _expected_cols TEXT[] := ARRAY['version','name','applied_at','checksum'];
+  _expected_types TEXT[] := ARRAY['text','text','timestamp with time zone','text'];
+  _missing TEXT[];
+  _grant RECORD;
+  _bad_grants TEXT[];
+BEGIN
+  -- Verify column names
+  SELECT array_agg(e.col) INTO _missing
+  FROM (SELECT unnest(_expected_cols) AS col) e
+  WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'schema_migrations'
+      AND column_name = e.col
+  );
+
+  IF _missing IS NOT NULL AND array_length(_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: missing columns: %',
+      array_to_string(_missing, ', ');
+  END IF;
+
+  -- Verify NO runtime-role grants (only postgres should have access)
+  SELECT array_agg(g.grantee || ':' || g.privilege_type) INTO _bad_grants
+  FROM information_schema.role_table_grants g
+  WHERE g.table_schema = 'public'
+    AND g.table_name = 'schema_migrations'
+    AND g.grantee IN ('anon', 'authenticated', 'PUBLIC', 'service_role');
+
+  IF _bad_grants IS NOT NULL AND array_length(_bad_grants, 1) > 0 THEN
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS GRANT FAILURE: runtime roles have access: %',
+      array_to_string(_bad_grants, ', ');
+  END IF;
+
+  RAISE NOTICE 'schema_migrations structure validated: 4 columns, no runtime-role grants.';
+END $struct$;
+
 DO $guard$
 DECLARE
   _expected TEXT := '5393486531414C2F975C21A3033187294A60EEA51012D6F7386CC726C0750BED';
