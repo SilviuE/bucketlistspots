@@ -56,11 +56,11 @@ ON CONFLICT (id) DO NOTHING;
 -- ================================================================
 -- TEST EXPERIENCES (published)
 -- ================================================================
-INSERT INTO public.experiences (title, duration, difficulty, location, image, price, currency, guide_id, rating, reviews, is_published)
+INSERT INTO public.experiences (id, title, duration, difficulty, location, image, price, currency, guide_id, rating, reviews, is_published)
 VALUES
-  ('Kilimanjaro Machame Route — 7 Days', '7 days', 'Challenging', 'Tanzania', '/images/experiences/kilimanjaro.jpg', 2500.00, 'usd', 'guide-staging-pub', 4.8, 12, true),
-  ('Inca Trail to Machu Picchu — 4 Days', '4 days', 'Moderate', 'Peru', '/images/experiences/inca-trail.jpg', 1800.00, 'usd', 'guide-staging-featured', 4.9, 8, true)
-ON CONFLICT DO NOTHING;
+  ('e0000000-0000-0000-0000-000000000001', 'Kilimanjaro Machame Route — 7 Days', '7 days', 'Challenging', 'Tanzania', '/images/experiences/kilimanjaro.jpg', 2500.00, 'usd', 'guide-staging-pub', 4.8, 12, true),
+  ('e0000000-0000-0000-0000-000000000002', 'Inca Trail to Machu Picchu — 4 Days', '4 days', 'Moderate', 'Peru', '/images/experiences/inca-trail.jpg', 1800.00, 'usd', 'guide-staging-featured', 4.9, 8, true)
+ON CONFLICT (id) DO NOTHING;
 
 
 -- ================================================================

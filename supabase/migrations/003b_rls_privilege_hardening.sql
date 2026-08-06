@@ -27,6 +27,16 @@ BEGIN;
 -- ================================================================
 -- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksum‑verified)
 -- ================================================================
+-- On production, 0000 is never run so schema_migrations may not
+-- exist. Create it if absent before the guard checks.
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+  version TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  checksum TEXT
+);
+REVOKE ALL ON public.schema_migrations FROM anon, authenticated, PUBLIC, service_role;
+
 DO $guard$
 DECLARE
   _expected TEXT := '5393486531414C2F975C21A3033187294A60EEA51012D6F7386CC726C0750BED';

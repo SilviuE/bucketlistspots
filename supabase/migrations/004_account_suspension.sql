@@ -29,6 +29,16 @@ BEGIN;
 -- ================================================================
 -- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksum‑verified)
 -- ================================================================
+-- Production bootstrapping: create schema_migrations if it does
+-- not yet exist (belt‑and‑braces; 003b normally creates it).
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+  version TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  checksum TEXT
+);
+REVOKE ALL ON public.schema_migrations FROM anon, authenticated, PUBLIC, service_role;
+
 DO $guard$
 DECLARE
   _expected TEXT := 'E31D5DF971EE776BD7126EB12C65827DBFD374AA3C8D5C79725DF64C63DE6543';

@@ -156,6 +156,85 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- ================================================================
+-- PHASE 4b: STAGING SEED IDEMPOTENCY (run seed twice, verify)
+-- ================================================================
+DO $p4b$ BEGIN
+  RAISE NOTICE '';
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'PHASE 4b: Staging Seed Idempotency';
+  RAISE NOTICE '══════════════════════════════════════════';
+END $p4b$;
+
+-- Snapshot row counts before re‑run
+DROP TABLE IF EXISTS _seed_counts_before;
+CREATE TEMP TABLE _seed_counts_before AS
+SELECT 'users' AS tbl, count(*) AS n FROM public.users
+UNION ALL SELECT 'guides', count(*) FROM public.guides
+UNION ALL SELECT 'experiences', count(*) FROM public.experiences
+UNION ALL SELECT 'destinations', count(*) FROM public.destinations
+UNION ALL SELECT 'destination_charities', count(*) FROM public.destination_charities
+UNION ALL SELECT 'claims_registry', count(*) FROM public.claims_registry
+UNION ALL SELECT 'testimonials', count(*) FROM public.testimonials
+UNION ALL SELECT 'posts', count(*) FROM public.posts;
+
+-- Re‑run the staging seed
+\i supabase/seed/staging_seed.sql
+
+-- Snapshot after re‑run
+CREATE TEMP TABLE _seed_counts_after AS
+SELECT 'users' AS tbl, count(*) AS n FROM public.users
+UNION ALL SELECT 'guides', count(*) FROM public.guides
+UNION ALL SELECT 'experiences', count(*) FROM public.experiences
+UNION ALL SELECT 'destinations', count(*) FROM public.destinations
+UNION ALL SELECT 'destination_charities', count(*) FROM public.destination_charities
+UNION ALL SELECT 'claims_registry', count(*) FROM public.claims_registry
+UNION ALL SELECT 'testimonials', count(*) FROM public.testimonials
+UNION ALL SELECT 'posts', count(*) FROM public.posts;
+
+-- 4b‑1: No duplicate rows (count unchanged)
+DO $t4b1$
+DECLARE
+  _diffs INT;
+BEGIN
+  SELECT count(*) INTO _diffs
+  FROM _seed_counts_before b JOIN _seed_counts_after a ON a.tbl = b.tbl
+  WHERE b.n != a.n;
+  IF _diffs = 0 THEN
+    RAISE NOTICE 'PASS: 4b‑1 — seed idempotent: row counts unchanged on all 8 tables.';
+  ELSE
+    RAISE WARNING 'FAIL: 4b‑1 — % tables have different row counts after seed re‑run.', _diffs;
+  END IF;
+END $t4b1$;
+
+-- 4b‑2: ON CONFLICT DO NOTHING prevents overwrite
+DO $t4b2$
+DECLARE _name TEXT;
+BEGIN
+  SELECT name INTO _name FROM public.guides WHERE id = 'guide-staging-pub';
+  IF _name = 'Kibo Guides' THEN
+    RAISE NOTICE 'PASS: 4b‑2 — existing row guide-staging-pub not overwritten (ON CONFLICT DO NOTHING).';
+  ELSE
+    RAISE WARNING 'FAIL: 4b‑2 — guide-staging-pub data changed: expected Kibo Guides, got %', _name;
+  END IF;
+END $t4b2$;
+
+-- 4b‑3: Destinations ON CONFLICT (name) DO NOTHING
+DO $t4b3$
+DECLARE _c INT;
+BEGIN
+  SELECT count(*) INTO _c FROM public.destinations WHERE name = 'Kilimanjaro';
+  IF _c = 1 THEN
+    RAISE NOTICE 'PASS: 4b‑3 — destination Kilimanjaro still 1 row after seed re‑run.';
+  ELSE
+    RAISE WARNING 'FAIL: 4b‑3 — destination Kilimanjaro has % rows (expected 1).', _c;
+  END IF;
+END $t4b3$;
+
+DROP TABLE IF EXISTS _seed_counts_before;
+DROP TABLE IF EXISTS _seed_counts_after;
+
+
+-- ================================================================
 -- PHASE 5: Idempotency re-run (verify safe re-execution)
 -- ================================================================
 DO $p5$ BEGIN
@@ -752,12 +831,14 @@ BEGIN
   RAISE NOTICE 'Review the output above for PASS/FAIL results.';
   RAISE NOTICE 'Expected: All 15 REST-query tests (7a-7o) PASS.';
   RAISE NOTICE 'Expected: 19 tables (18 app + schema_migrations).';
-  RAISE NOTICE 'Expected: RLS enabled on all 18 application tables.';
+  RAISE NOTICE 'Expected: 18 of 18 app tables RLS enabled (deny‑by‑default).';
+  RAISE NOTICE 'Expected: 4 policy‑bearing tables, 14 zero‑policy tables.';
   RAISE NOTICE 'Expected: 5 hardened policies post-003b.';
   RAISE NOTICE 'Expected: service_role=arwd table default ACL.';
   RAISE NOTICE 'Expected: schema_migrations records: 0000, 003b, 004.';
   RAISE NOTICE 'Expected: checksum mismatch tests T1-T3 PASS.';
   RAISE NOTICE 'Expected: SECURITY DEFINER verification 8a-8f PASS.';
+  RAISE NOTICE 'Expected: staging seed idempotency 4b-1/2/3 PASS.';
   RAISE NOTICE '';
   RAISE NOTICE 'Re-run checks: 0000, 003b, 004 all exited cleanly.';
 END $final$;
