@@ -635,20 +635,18 @@ END $$;
 -- SECTION 10: DEFAULT PRIVILEGE HARDENING
 -- ================================================================
 -- Two tiers:
---   HARD  — ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public.
---           These are under application control on Supabase and MUST
---           succeed. Any failure here is a hard abort.
---   ADVISORY — global defaults (no schema scope) and FOR ROLE
---           supabase_admin. Supabase SQL Editor runs as a managed
---           postgres role that cannot alter defaults for platform-
---           managed roles or global scope. These are attempted inside
---           exception handlers; failure produces a WARNING only.
+--   HARD  — ALTER DEFAULT PRIVILEGES FOR ROLE postgres (global and
+--           schema-scoped). These are under application control.
+--           Any failure is a hard abort.
+--   ADVISORY — FOR ROLE supabase_admin. Supabase SQL Editor runs
+--           as a managed postgres role that cannot alter defaults
+--           for the platform-managed supabase_admin role. Each
+--           statement is attempted; insufficient_privilege (42501)
+--           produces a WARNING. All other exceptions rethrow.
 --
--- Rationale: supabase_admin is platform-managed. The postgres role is
--- the only role that creates application objects. Enforcing narrow
--- postgres schema-scoped defaults achieves the security boundary.
--- Supabase retains platform defaults for supabase_admin and global
--- scope — these are verified by read-only preflight, not by migration.
+-- Global postgres function EXECUTE revocation is a hard requirement
+-- because schema-scoped defaults alone cannot reliably undo PUBLIC
+-- EXECUTE behaviour for future functions created outside schema public.
 
 -- ── Retroactive: strip sequences from client roles ────────────────
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
@@ -656,11 +654,20 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════
--- HARD: Schema-scoped defaults for postgres (application-controlled)
+-- HARD: Global postgres function default (current role = postgres;
+--       PostgreSQL allows a role to alter its own global defaults)
 -- ═══════════════════════════════════════════════════════════════════
--- These MUST succeed. Any failure is a hard abort.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres
+  REVOKE EXECUTE ON FUNCTIONS FROM anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres
+  REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
 
--- Future functions in public — postgres (includes service_role)
+-- ═══════════════════════════════════════════════════════════════════
+-- HARD: Schema-scoped postgres defaults (application-controlled)
+-- ═══════════════════════════════════════════════════════════════════
+-- Future functions in public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
@@ -670,7 +677,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM service_role;
 
--- Future tables in public — postgres
+-- Future tables in public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
@@ -682,7 +689,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;
 
--- Future sequences in public — postgres
+-- Future sequences in public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
@@ -695,90 +702,140 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO service_role;
 
 DO $$ BEGIN
-  RAISE NOTICE 'Section 10 HARD: postgres schema-scoped defaults applied.';
+  RAISE NOTICE 'Section 10 HARD: global + schema-scoped postgres defaults applied.';
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════
--- ADVISORY: Global defaults (no schema scope) for postgres
+-- ADVISORY: supabase_admin defaults (platform-managed role)
 -- ═══════════════════════════════════════════════════════════════════
--- These require superuser on hosted Supabase. Attempt, warn, proceed.
-
-DO $adv_global$
-DECLARE _ok INT := 0; _fail INT := 0;
-BEGIN
-  BEGIN
-    ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-    _ok := _ok + 1;
-  EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN
-    ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM anon;
-    _ok := _ok + 1;
-  EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN
-    ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
-    _ok := _ok + 1;
-  EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-
-  IF _fail > 0 THEN
-    RAISE WARNING 'ADVISORY: %/% global postgres default ACLs skipped (requires superuser).', _fail, _ok + _fail;
-  ELSE
-    RAISE NOTICE 'ADVISORY: all global postgres default ACLs applied.';
-  END IF;
-END $adv_global$;
-
--- ═══════════════════════════════════════════════════════════════════
--- ADVISORY: All defaults for supabase_admin (platform-managed)
--- ═══════════════════════════════════════════════════════════════════
--- supabase_admin is managed by the Supabase platform. The SQL Editor
--- postgres role cannot alter its defaults. Attempt each DDL inside
--- an exception handler. The read-only preflight verifies the actual
--- state — if the platform has set safe defaults, preflight passes.
--- If not, the preflight reports it for founder review.
-
-DO $adv_supa$
-DECLARE _ok INT := 0; _fail INT := 0;
+-- These statements target supabase_admin, which is managed by the
+-- Supabase platform. The SQL Editor postgres role may not have
+-- permission to alter its defaults. Each is attempted; only
+-- insufficient_privilege (SQLSTATE 42501) is caught and warned.
+-- Every other exception (syntax error, undefined role, etc.) is
+-- rethrown as a hard abort.
+DO $adv_supa_admin$
+DECLARE
+  _ok INT := 0;
+  _fail INT := 0;
+  _stmt TEXT;
+  _sqlstate TEXT;
+  _msg TEXT;
 BEGIN
   -- Global function defaults
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM anon;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM anon';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM authenticated';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
 
   -- Schema-scoped function defaults
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM service_role;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM authenticated';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM service_role';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
 
   -- Schema-scoped table defaults
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM authenticated;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM authenticated';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
 
   -- Schema-scoped sequence defaults
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
-  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated;
-    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
+
+  _stmt := 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated';
+  BEGIN EXECUTE _stmt; _ok := _ok + 1;
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS _sqlstate = RETURNED_SQLSTATE, _msg = MESSAGE_TEXT;
+    RAISE WARNING 'ADVISORY SKIP [%] %: %', _sqlstate, _stmt, _msg;
+    _fail := _fail + 1;
+  END;
 
   IF _fail > 0 THEN
-    RAISE WARNING 'ADVISORY: %/% supabase_admin default ACLs skipped (platform-managed role).'
-      ' This is normal on hosted Supabase. Verify with production_preflight.sql.', _fail, _ok + _fail;
+    RAISE WARNING 'ADVISORY SUMMARY: %/% supabase_admin default ACLs skipped (platform-managed role).', _fail, _ok + _fail;
   ELSE
-    RAISE NOTICE 'ADVISORY: all supabase_admin default ACLs applied.';
+    RAISE NOTICE 'ADVISORY: all % supabase_admin default ACLs applied.', _ok;
   END IF;
-END $adv_supa$;
+END $adv_supa_admin$;
 
 
 -- ================================================================

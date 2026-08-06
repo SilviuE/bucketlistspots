@@ -15,7 +15,7 @@
     },
     {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
-      "sha256": "5202C34DF73EBF60F83C2C56F8DB9F0AC8A053BC3ECDB01BF018D8EC12157BC6",
+      "sha256": "D07A2D2A9C7252CE64CF83F932E8905B6D02A247C0D9F075A9255BABC6A2D31E",
       "bytes": 47756,
       "role": "RLS privilege hardening - fresh and upgrade paths"
     },
@@ -39,7 +39,7 @@
     },
     {
       "path": "supabase/test/phaseb_test_harness.sql",
-      "sha256": "91E43C605EC0A3EE6F16C547EF77420D74C93421B738520A8C131F0E5EE350DB",
+      "sha256": "57B3F13206AD85F396A5D686FD11E83434FB90047A8333B8A098EBD1565144B8",
       "bytes": 38297,
       "role": "disposable DB test harness"
     },

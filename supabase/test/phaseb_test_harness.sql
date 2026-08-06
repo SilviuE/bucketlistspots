@@ -965,6 +965,45 @@ BEGIN
 END $t8f$;
 
 
+-- 8g. Global postgres function EXECUTE default revoked from PUBLIC
+DO $t8g$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_default_acl d JOIN pg_roles r ON r.oid = d.defaclrole
+    WHERE r.rolname = 'postgres' AND d.defaclobjtype = 'f'
+      AND d.defaclacl::text ~ '(\{|,)=X/postgres'
+  ) THEN
+    RAISE WARNING 'FAIL: 8g — global postgres function default still grants EXECUTE to PUBLIC';
+  ELSE
+    RAISE NOTICE 'PASS: 8g — global postgres function EXECUTE default revoked from PUBLIC.';
+  END IF;
+END $t8g$;
+
+-- 8h. Advisory rethrow: invalid statement in advisory block must hard-fail
+DO $t8h$
+DECLARE _caught_insufficient BOOLEAN := false; _rethrew BOOLEAN := false;
+BEGIN
+  BEGIN
+    -- Deliberately invalid: non-existent object type
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE ALL ON WIDGETS FROM PUBLIC';
+    RAISE WARNING 'FAIL: 8h — invalid advisory statement was NOT rethrown';
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      _caught_insufficient := true;
+    WHEN syntax_error OR invalid_parameter_value OR OTHERS THEN
+      _rethrew := true;
+  END;
+
+  IF _rethrew THEN
+    RAISE NOTICE 'PASS: 8h — invalid advisory statement correctly rethrew (not insufficient_privilege).';
+  ELSIF _caught_insufficient THEN
+    RAISE NOTICE 'PASS: 8h — advisory statement caught insufficient_privilege as expected.';
+  ELSE
+    RAISE WARNING 'FAIL: 8h — advisory statement did not throw any exception';
+  END IF;
+END $t8h$;
+
+
 -- ================================================================
 -- FINAL RESULT
 -- ================================================================
@@ -984,7 +1023,7 @@ BEGIN
   RAISE NOTICE 'Expected: service_role=arwd table default ACL.';
   RAISE NOTICE 'Expected: schema_migrations records: 0000, 003b, 004.';
   RAISE NOTICE 'Expected: checksum mismatch tests T1-T3 PASS.';
-  RAISE NOTICE 'Expected: SECURITY DEFINER verification 8a-8f PASS.';
+  RAISE NOTICE 'Expected: SECURITY DEFINER verification 8a-8h PASS.';
   RAISE NOTICE 'Expected: staging seed idempotency 4b-1/2/3 PASS.';
   RAISE NOTICE '';
   RAISE NOTICE 'Re-run checks: 0000, 003b, 004 all exited cleanly.';
