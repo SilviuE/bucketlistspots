@@ -106,14 +106,32 @@ ON CONFLICT (id) DO NOTHING;
 -- ================================================================
 -- TEST POSTS
 -- ================================================================
-INSERT INTO public.posts (id, user_id, author_role, author_name, content)
-VALUES
-  ('post-staging-001', '22222222-2222-2222-2222-222222222222', 'guide', 'Kibo Guides', 'New season dates announced for Kilimanjaro expeditions - book now for September departures!')
-ON CONFLICT (id) DO NOTHING;
+-- posts.user_id references auth.users(id) which is Supabase-managed.
+-- The row is inserted only if the auth.user exists. Otherwise it is
+-- skipped gracefully  the seed must not fail on missing auth data.
+DO $seed_posts$
+DECLARE
+  _auth_exists BOOLEAN;
+BEGIN
+  SELECT EXISTS(
+    SELECT 1 FROM auth.users WHERE id = '22222222-2222-2222-2222-222222222222'
+  ) INTO _auth_exists;
+
+  IF _auth_exists THEN
+    INSERT INTO public.posts (id, user_id, author_role, author_name, content)
+    VALUES ('post-staging-001', '22222222-2222-2222-2222-222222222222', 'guide', 'Kibo Guides', 'New season dates announced for Kilimanjaro expeditions - book now for September departures!')
+    ON CONFLICT (id) DO NOTHING;
+    RAISE NOTICE 'Seed posts: test post inserted (auth.user present).';
+  ELSE
+    RAISE WARNING 'Seed posts: skipped (auth.user 22222222-... not found  Supabase Auth managed).';
+  END IF;
+END $seed_posts$;
 
 
 DO $done$
+DECLARE _post_count INT;
 BEGIN
+  SELECT count(*) INTO _post_count FROM public.posts;
   RAISE NOTICE '============================================================';
   RAISE NOTICE 'STAGING SEED: Complete (test data only)';
   RAISE NOTICE '============================================================';
@@ -124,7 +142,7 @@ BEGIN
   RAISE NOTICE 'Charities: 2 seeded';
   RAISE NOTICE 'Claims: 2 approved/published';
   RAISE NOTICE 'Testimonials: 2 approved/published';
-  RAISE NOTICE 'Posts: 1 test post';
+  RAISE NOTICE 'Posts: % test post(s)', _post_count;
   RAISE NOTICE '';
   RAISE NOTICE 'All data is fake/test data. Safe for staging use only.';
   RAISE NOTICE '============================================================';

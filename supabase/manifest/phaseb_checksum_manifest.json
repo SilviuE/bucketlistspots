@@ -27,7 +27,7 @@
     },
     {
       "path": "supabase/seed/staging_seed.sql",
-      "sha256": "BCBEF096FF224ED12660ECF745E516B6FE6D8628E892F615F3BA4F9DACEA26CA",
+      "sha256": "13AB6FB1DFE9293D1108309FBCC2394BE56D1E87487AE5256FD4AEC2F4DA9AF5",
       "bytes": 7454,
       "role": "staging-only test data seed"
     },
