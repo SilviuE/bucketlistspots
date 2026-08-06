@@ -8,8 +8,8 @@
 | Item | Value |
 |---|---|
 | Custom domain (canonical URL) | `https://bucketlistspots.com` |
-| Default Netlify subdomain | `comfy-truffle-b279e3.netlify.app` (returns 404 — custom domain is the serving URL) |
-| Site name | `comfy-truffle-b279e3` |
+| Default Netlify subdomain | `comfy-truffle-b279e1.netlify.app` (returns 404 — custom domain is the serving URL) |
+| Site name | `comfy-truffle-b279e1` |
 | Netlify Site API ID (UUID) | NOT YET VERIFIED — retrieve from Netlify dashboard: Site → Site configuration → General → Site details (requires dashboard access, see Staging Runbook Section 8) |
 | Production deploy branch | `main` (`remotes/origin/HEAD -> origin/main`) |
 | Current production commit | `e843e9cec3dead1a3f17654c0c4005a9a6dc931c` (branch `main`) |
@@ -77,7 +77,7 @@ staging anon key so server functions and the browser bundle both work.
 
 ```
 ┌─────────────────────────────┐      ┌──────────────────────────────┐
-│ Netlify (comfy-truffle-b279e3) │     │  Supabase prod                 │
+│ Netlify (comfy-truffle-b279e1) │     │  Supabase prod                 │
 │  main → bucketlistspots.com    │────▶│  ref nmyhytrnzfhdstqazttb      │
 │  functions use prod env vars   │     │  anon + service_role keys      │
 └─────────────────────────────┘      └──────────────────────────────┘

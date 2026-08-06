@@ -1,7 +1,7 @@
 # Manual UAT Matrix — BucketListSpots.com (Staging)
 
 **Status:** Authorised scope item 7 — run against the isolated **staging** Deploy Preview
-(`https://<hash>--comfy-truffle-b279e3.netlify.app`) wired to the staging Supabase
+(`https://<hash>--comfy-truffle-b279e1.netlify.app`) wired to the staging Supabase
 project. **Never** run against `bucketlistspots.com` / production Supabase.
 
 ## Test Accounts (create in staging Supabase Auth)

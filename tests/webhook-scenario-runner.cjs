@@ -22,7 +22,7 @@
  *           useful only for signature/state-machine checks.
  *
  * USAGE (after staging exists — see docs/staging-environment-setup.md):
- *   $env:STAGING_WEBHOOK_URL = "https://<hash>--comfy-truffle-b279e3.netlify.app/webhooks/stripe"
+ *   $env:STAGING_WEBHOOK_URL = "https://<hash>--comfy-truffle-b279e1.netlify.app/webhooks/stripe"
  *   $env:STRIPE_WEBHOOK_SECRET = "whsec_..."        (STAGING test-mode signing secret)
  *   $env:STRIPE_SECRET_KEY = "sk_test_..."          (STAGING test-mode secret — real PIs)
  *   $env:VITE_SUPABASE_URL = "https://<staging-ref>.supabase.co"
@@ -183,11 +183,11 @@ async function countPaymentReports(sessionId) {
 
   if (!WEBHOOK_URL) {
     console.log('STOP: STAGING_WEBHOOK_URL must be set to the STAGING deploy preview URL (never production).');
-    console.log('  e.g. https://<hash>--comfy-truffle-b279e3.netlify.app/webhooks/stripe');
+    console.log('  e.g. https://<hash>--comfy-truffle-b279e1.netlify.app/webhooks/stripe');
     process.exit(1);
   }
-  if (WEBHOOK_URL.includes('bucketlistspots.com') || !WEBHOOK_URL.includes('--comfy-truffle-b279e3')) {
-    console.log('STOP: STAGING_WEBHOOK_URL must be a Deploy Preview URL (contains --comfy-truffle-b279e3),');
+  if (WEBHOOK_URL.includes('bucketlistspots.com') || !WEBHOOK_URL.includes('--comfy-truffle-b279e1')) {
+    console.log('STOP: STAGING_WEBHOOK_URL must be a Deploy Preview URL (contains --comfy-truffle-b279e1),');
     console.log('  never the production domain bucketlistspots.com. Aborting for safety.');
     process.exit(1);
   }

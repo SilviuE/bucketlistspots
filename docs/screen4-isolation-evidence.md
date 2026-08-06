@@ -3,7 +3,7 @@
 Date: 2026-08-06
 Staging Supabase project ref: `tqooyiyqsidbemzlcsfp`
 Production Supabase project ref (must be ABSENT from staging): `nmyhytrnzfhdstqazttb`
-Netlify site: `comfy-truffle-b279e3` (Deploy Previews = branch builds of the same repo)
+Netlify site: `comfy-truffle-b279e1` (Deploy Previews = branch builds of the same repo)
 
 ## Check 4.1 — Production Supabase reference absent from deployed frontend
 
@@ -14,13 +14,17 @@ Netlify site: `comfy-truffle-b279e3` (Deploy Previews = branch builds of the sam
 - Any other `*.supabase.co` refs: **none** (unique)
 - Result: **PASS**
 
-**Deployed preview bundle (actual URL):** PENDING — requires preview URL from user.
-(Command once available: fetch `<preview>/assets/index-*.js`, grep `nmyhytrnzfhdstqazttb` → must be 0.)
+**Deployed preview bundle** (`https://deploy-preview-1--comfy-truffle-b279e1.netlify.app/`, fetched 2026-08-06):
+- Bundle: `assets/index-BXbTb8Jx.js` (1,058,705 bytes)
+- `nmyhytrnzfhdstqazttb`: **0**
+- `https://tqooyiyqsidbemzlcsfp.supabase.co`: **1** (only supabase ref present)
+- Result: **PASS**
 
 ## Check 4.2 — Staging reference present
 
 **Local staging build:** staging URL present in bundle. Result: **PASS**
-**Deployed preview bundle:** PENDING preview URL.
+**Deployed preview bundle:** `https://tqooyiyqsidbemzlcsfp.supabase.co` present, and it is the **only**
+`*.supabase.co` ref in the served bundle. Result: **PASS**
 
 ## Check 4.3 — No secrets in frontend files
 
@@ -46,6 +50,16 @@ Result: **PASS**
 Dashboard verification (user, dashboard-only): confirm Branch/Deploy Preview context vars point at
 `https://tqooyiyqsidbemzlcsfp.supabase.co`. Result: **PASS (source)** / PENDING (dashboard screenshot)
 
+**Deployed function probes (fetched 2026-08-06):**
+- Preview `GET /api/charities?destination=kenya` → HTTP 500
+  `{"error":"Could not find the table 'public.destination_charities' in the schema cache"}`
+  → function hit the **staging** project, which has not yet had migrations applied (table absent).
+- Production `GET /api/charities?destination=kenya` (same site, main domain) → HTTP 200
+  `{"charities":[],"mockMode":true}` → production project intact.
+- Preview `POST /webhooks/stripe` → HTTP 503 `{"error":"Webhook not configured"}`
+  → staging has no Stripe secrets set (safe; nothing leaks).
+Result: **PASS** — preview functions resolve staging env, production functions resolve production.
+
 ## Check 4.5 — Production and main untouched
 
 - Remote `main` HEAD: `e843e9cec3dead1a3f17654c0c4005a9a6dc931c` — unchanged since session start.
@@ -58,14 +72,11 @@ Result: **PASS (git)** / PENDING (dashboard screenshot)
 
 | Check | Result |
 |---|---|
-| 4.1 prod ref absent (source + local build) | PASS |
-| 4.1 prod ref absent (deployed bundle) | PENDING preview URL |
-| 4.2 staging ref present (local build) | PASS |
-| 4.3 no secrets in frontend (source + build) | PASS |
-| 4.4 functions use staging (source) | PASS |
-| 4.5 main/production untouched (git) | PASS |
+| 4.1 prod ref absent (source + local build + deployed bundle) | PASS |
+| 4.2 staging ref present (local build + deployed bundle) | PASS |
+| 4.3 no secrets in frontend (source + build + deployed bundle) | PASS |
+| 4.4 functions use staging (source + deployed function probes) | PASS |
+| 4.5 main/production untouched (git + production probe) | PASS |
 
-## Blocking action
-
-Provide the Deploy Preview URL (e.g. `https://<hash>--comfy-truffle-b279e3.netlify.app`) so the
-deployed bundle + functions can be grepped directly to close Checks 4.1/4.2/4.4.
+All five Screen 4 checks PASS. Proceed to migrations via SQL Editor on staging
+(`docs/staging-migration-sequence-sql-editor.md`).

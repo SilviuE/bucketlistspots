@@ -50,7 +50,7 @@ stale processing (>5 min) → reprocessed atomically by claim_webhook_event RPC
 
 ```powershell
 # From website/ (repo root)
-$env:STAGING_WEBHOOK_URL      = "https://<hash>--comfy-truffle-b279e3.netlify.app/webhooks/stripe"
+$env:STAGING_WEBHOOK_URL      = "https://<hash>--comfy-truffle-b279e1.netlify.app/webhooks/stripe"
 $env:STRIPE_WEBHOOK_SECRET    = "whsec_..._staging_..."   # signing secret from step 3
 $env:STRIPE_SECRET_KEY        = "sk_test_..."             # staging test-mode key (creates real test PIs)
 $env:VITE_SUPABASE_URL        = "https://<staging-ref>.supabase.co"
@@ -61,7 +61,7 @@ node tests/webhook-scenario-runner.cjs --synthetic   # synthetic payloads only
 ```
 
 Safety guards in the runner:
-- Aborts unless `STAGING_WEBHOOK_URL` is set and contains `--comfy-truffle-b279e3`.
+- Aborts unless `STAGING_WEBHOOK_URL` is set and contains `--comfy-truffle-b279e1`.
 - Aborts if the URL is `bucketlistspots.com` (production domain).
 - Aborts if `STRIPE_WEBHOOK_SECRET` is unset or still `whsec_REPLACE_ME...`.
 

@@ -13,7 +13,7 @@
 |---|---|
 | Staging Supabase project name (suggested) | `bucketlistspots-staging` |
 | Staging project ref (assign after creation) | TBD → record everywhere in this doc |
-| Netlify site for staging | same site `comfy-truffle-b279e3` — Deploy Previews are branch builds of the same repo |
+| Netlify site for staging | same site `comfy-truffle-b279e1` — Deploy Previews are branch builds of the same repo |
 | Staging trigger branch | `review/*` (or `dev`), NOT `main` |
 | Production branch | `main` — must keep production env vars |
 | Stripe mode | TEST mode only (`sk_test_…`, `whsec_…` test secret) |
@@ -53,7 +53,7 @@ Authentication → Add user):
 > Branch. `main` (production) MUST keep production values. `review/*` and Deploy Previews
 > MUST use staging values.
 
-Netlify Dashboard → Site `comfy-truffle-b279e3` → Site configuration → Environment variables.
+Netlify Dashboard → Site `comfy-truffle-b279e1` → Site configuration → Environment variables.
 Create variable groups / contexts:
 
 **Production context (unchanged, verify only):**
@@ -92,7 +92,7 @@ Reference: https://docs.netlify.com/environment-variables/overview/ — scope a 
 
 1. Stripe Dashboard → Developers → Webhooks → Add endpoint:
    - URL: `https://<deploy-preview-url>/webhooks/stripe`
-     (Deploy Preview URL pattern: `https://<hash>--comfy-truffle-b279e3.netlify.app`)
+     (Deploy Preview URL pattern: `https://<hash>--comfy-truffle-b279e1.netlify.app`)
    - Events: `checkout.session.completed`
    - Mode: **Test** (NOT live).
 2. Reveal the **Signing secret** (`whsec_…`) for the STAGING webhook → store in vault →
@@ -106,7 +106,7 @@ For each check, record PASS/FAIL with evidence screenshot.
 | # | Check | How |
 |---|---|---|
 | 1 | Deploy a branch build (`review/*`) triggers Deploy Preview | Netlify Deploys → branch deploy |
-| 2 | Preview serves the app | open the `<hash>--comfy-truffle-b279e3.netlify.app` URL, HTTP 200 |
+| 2 | Preview serves the app | open the `<hash>--comfy-truffle-b279e1.netlify.app` URL, HTTP 200 |
 | 3 | Preview uses STAGING Supabase | Preview Network tab → requests to `https://<staging-ref>.supabase.co`, NOT `nmyhytrnzfhdstqazttb` |
 | 4 | Built bundle contains staging ref | Preview → view source of `assets/index-*.js`, grep for `<staging-ref>`; must NOT contain `nmyhytrnzfhdstqazttb` |
 | 5 | anon SELECT on staging `users` blocked by RLS | REST probe as anon → empty |
