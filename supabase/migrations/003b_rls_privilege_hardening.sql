@@ -6,7 +6,14 @@
 --
 -- Prerequisites:
 --   1. 003a_publication_columns.sql applied (is_published columns added)
---   2. 003_backfill_experiences_destinations.sql applied (founder-approved rows set to true)
+--   2. Core tables exist (from 0000 baseline or app-created)
+--
+-- Publication readiness is now a SEPARATE read-only preflight gate
+-- (supabase/preflight/production_preflight.sql). 003b no longer
+-- aborts on missing published content — it hardens RLS regardless.
+--
+-- Safe re-execution: checks schema_migrations; exits cleanly if
+-- already applied (no "0000" migration required — standalone guard).
 --
 -- Function signatures (verified from pg_proc / 002 migration source):
 --   public.credit_referral_reward(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT)
@@ -18,20 +25,56 @@
 BEGIN;
 
 -- ================================================================
--- SECTION 1: PUBLICATION ABORT CHECK (two separate checks)
+-- SECTION 0: SCHEMA_MIGRATIONS GUARD (safe re-execution)
 -- ================================================================
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.experiences WHERE is_published = true LIMIT 1) THEN
-    RAISE EXCEPTION '003b ABORT: No published experiences. Run 003_backfill first.';
+DO $guard$
+DECLARE
+  _applied BOOLEAN;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
+    SELECT EXISTS(
+      SELECT 1 FROM public.schema_migrations WHERE version = '003b'
+    ) INTO _applied;
+    IF _applied THEN
+      RAISE NOTICE '============================================================';
+      RAISE NOTICE 'Migration 003b already applied — exiting cleanly.';
+      RAISE NOTICE '(Found in schema_migrations at %)',
+        (SELECT applied_at FROM public.schema_migrations WHERE version = '003b');
+      RAISE NOTICE '============================================================';
+      RETURN;
+    END IF;
+  ELSE
+    RAISE NOTICE 'schema_migrations table not present — first-time run, proceeding.';
   END IF;
-  RAISE NOTICE 'Publication check passed: public.experiences has at least one published row.';
-END $$;
+END $guard$;
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.destinations WHERE is_published = true LIMIT 1) THEN
-    RAISE EXCEPTION '003b ABORT: No published destinations. Run 003_backfill first.';
+-- ================================================================
+-- SECTION 1: PUBLICATION READINESS NOTICE (advisory only — no abort)
+-- ================================================================
+DO $$ DECLARE
+  v_pub_exp INT; v_pub_dest INT;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema='public' AND table_name='experiences') THEN
+    SELECT count(*) INTO v_pub_exp FROM public.experiences WHERE is_published = true;
+  ELSE
+    v_pub_exp := 0;
   END IF;
-  RAISE NOTICE 'Publication check passed: public.destinations has at least one published row.';
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema='public' AND table_name='destinations') THEN
+    SELECT count(*) INTO v_pub_dest FROM public.destinations WHERE is_published = true;
+  ELSE
+    v_pub_dest := 0;
+  END IF;
+
+  IF v_pub_exp = 0 OR v_pub_dest = 0 THEN
+    RAISE WARNING 'Publication readiness: experiences=% published, destinations=% published.', v_pub_exp, v_pub_dest;
+    RAISE WARNING '003b RLS hardening WILL proceed (publication check is now a separate read-only preflight gate).';
+    RAISE WARNING 'Run supabase/preflight/production_preflight.sql before public launch to verify publication readiness.';
+  ELSE
+    RAISE NOTICE 'Publication readiness: % published experiences, % published destinations.', v_pub_exp, v_pub_dest;
+  END IF;
 END $$;
 
 
@@ -211,6 +254,7 @@ ALTER TABLE public.destination_charities   ENABLE ROW LEVEL SECURITY;
 DO $$
 DECLARE
   v_known_policies TEXT[] := ARRAY[
+    -- 20 legacy pre-003 policies
     'platform_config_admin',
     'transactions_select_own',
     'payment_reports_admin_only',
@@ -230,7 +274,13 @@ DECLARE
     'terms_acceptance_service_insert',
     'terms_acceptance_service_select',
     'webhook_inbox_service_all',
-    'booking_conf_service_all'
+    'booking_conf_service_all',
+    -- 5 hardened post-003b policies (for safe re-execution)
+    'users_select_own',
+    'users_update_own_name_avatar',
+    'guides_select_published',
+    'experiences_select_published',
+    'destinations_select_published'
   ];
   v_unknown TEXT[];
   v_pol TEXT;
@@ -772,5 +822,19 @@ DO $$ BEGIN
   RAISE NOTICE 'Application functions MUST be created by postgres, not supabase_admin.';
   RAISE NOTICE 'Publication: experiences/destinations gated by is_published = true (RLS).';
 END $$;
+
+-- Record migration in schema_migrations (safe re-execution guard)
+DO $record$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
+    INSERT INTO public.schema_migrations (version, name)
+    VALUES ('003b', 'RLS Privilege Hardening — 5 restrictive policies, column grants, default ACLs, function EXECUTE lockdown')
+    ON CONFLICT (version) DO NOTHING;
+    RAISE NOTICE 'schema_migrations: 003b recorded.';
+  ELSE
+    RAISE NOTICE 'schema_migrations table not present — migration record not written.';
+  END IF;
+END $record$;
 
 COMMIT;

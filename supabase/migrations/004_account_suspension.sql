@@ -19,9 +19,35 @@
 --
 -- Prerequisites: 003b applied (RLS, column grants, function ownership).
 -- Run order on staging: 001..003b then 004, then scenario-c.
+-- Safe re-execution: checks schema_migrations; exits cleanly if already applied.
 -- ================================================================
 
 BEGIN;
+
+-- ================================================================
+-- SECTION 0: SCHEMA_MIGRATIONS GUARD (safe re-execution)
+-- ================================================================
+DO $guard$
+DECLARE
+  _applied BOOLEAN;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
+    SELECT EXISTS(
+      SELECT 1 FROM public.schema_migrations WHERE version = '004'
+    ) INTO _applied;
+    IF _applied THEN
+      RAISE NOTICE '============================================================';
+      RAISE NOTICE 'Migration 004 already applied — exiting cleanly.';
+      RAISE NOTICE '(Found in schema_migrations at %)',
+        (SELECT applied_at FROM public.schema_migrations WHERE version = '004');
+      RAISE NOTICE '============================================================';
+      RETURN;
+    END IF;
+  ELSE
+    RAISE NOTICE 'schema_migrations table not present — first-time run, proceeding.';
+  END IF;
+END $guard$;
 
 -- ================================================================
 -- SECTION 1: PREFLIGHT — users table baseline
@@ -288,5 +314,19 @@ DO $$ BEGIN
   RAISE NOTICE 'History preserved: no deletes, no cascades on bookings/payments.';
   RAISE NOTICE 'Trigger function owned by postgres, EXECUTE revoked from all roles.';
 END $$;
+
+-- Record migration in schema_migrations (safe re-execution guard)
+DO $record$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
+    INSERT INTO public.schema_migrations (version, name)
+    VALUES ('004', 'Account Suspension — account_status column, audit table, trigger, visibility grants')
+    ON CONFLICT (version) DO NOTHING;
+    RAISE NOTICE 'schema_migrations: 004 recorded.';
+  ELSE
+    RAISE NOTICE 'schema_migrations table not present — migration record not written.';
+  END IF;
+END $record$;
 
 COMMIT;
