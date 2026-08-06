@@ -634,29 +634,33 @@ END $$;
 -- ================================================================
 -- SECTION 10: DEFAULT PRIVILEGE HARDENING
 -- ================================================================
+-- Two tiers:
+--   HARD  — ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public.
+--           These are under application control on Supabase and MUST
+--           succeed. Any failure here is a hard abort.
+--   ADVISORY — global defaults (no schema scope) and FOR ROLE
+--           supabase_admin. Supabase SQL Editor runs as a managed
+--           postgres role that cannot alter defaults for platform-
+--           managed roles or global scope. These are attempted inside
+--           exception handlers; failure produces a WARNING only.
+--
+-- Rationale: supabase_admin is platform-managed. The postgres role is
+-- the only role that creates application objects. Enforcing narrow
+-- postgres schema-scoped defaults achieves the security boundary.
+-- Supabase retains platform defaults for supabase_admin and global
+-- scope — these are verified by read-only preflight, not by migration.
 
--- Retroactive: strip sequences from client roles
+-- ── Retroactive: strip sequences from client roles ────────────────
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM authenticated;
 
--- Global: future functions ANYWHERE — postgres
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-  REVOKE EXECUTE ON FUNCTIONS FROM anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-  REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
+-- ═══════════════════════════════════════════════════════════════════
+-- HARD: Schema-scoped defaults for postgres (application-controlled)
+-- ═══════════════════════════════════════════════════════════════════
+-- These MUST succeed. Any failure is a hard abort.
 
--- Global: future functions ANYWHERE — supabase_admin
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
-  REVOKE EXECUTE ON FUNCTIONS FROM anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
-  REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
-
--- Schema-scoped: future functions in public — postgres (includes service_role)
+-- Future functions in public — postgres (includes service_role)
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
@@ -666,61 +670,115 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM service_role;
 
--- Schema-scoped: future functions in public — supabase_admin (includes service_role)
--- NOTE: On hosted Supabase, supabase_admin is platform-managed. These ALTER DEFAULT PRIVILEGES
--- may silently fail. This is expected — Supabase retains platform defaults for supabase_admin.
--- The postgres role defaults are under application control and must pass hard assertions.
--- All application functions MUST be created by postgres, not supabase_admin.
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE EXECUTE ON FUNCTIONS FROM anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE EXECUTE ON FUNCTIONS FROM service_role;
-
--- Schema-scoped: future tables in public — postgres
+-- Future tables in public — postgres
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM authenticated;
--- Narrowed defaults: service_role gets SELECT, INSERT, UPDATE, DELETE only (no TRUNCATE/REFERENCES/TRIGGER/MAINTAIN)
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON TABLES FROM service_role;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;
 
--- Schema-scoped: future sequences in public — postgres
+-- Future sequences in public — postgres
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON SEQUENCES FROM anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON SEQUENCES FROM authenticated;
--- Narrowed defaults: service_role gets USAGE, SELECT only (no UPDATE)
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE ALL ON SEQUENCES FROM service_role;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO service_role;
 
--- Schema-scoped: future tables in public — supabase_admin
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON TABLES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON TABLES FROM anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON TABLES FROM authenticated;
+DO $$ BEGIN
+  RAISE NOTICE 'Section 10 HARD: postgres schema-scoped defaults applied.';
+END $$;
 
--- Schema-scoped: future sequences in public — supabase_admin
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM authenticated;
+-- ═══════════════════════════════════════════════════════════════════
+-- ADVISORY: Global defaults (no schema scope) for postgres
+-- ═══════════════════════════════════════════════════════════════════
+-- These require superuser on hosted Supabase. Attempt, warn, proceed.
+
+DO $adv_global$
+DECLARE _ok INT := 0; _fail INT := 0;
+BEGIN
+  BEGIN
+    ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+    _ok := _ok + 1;
+  EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN
+    ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM anon;
+    _ok := _ok + 1;
+  EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN
+    ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
+    _ok := _ok + 1;
+  EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+
+  IF _fail > 0 THEN
+    RAISE WARNING 'ADVISORY: %/% global postgres default ACLs skipped (requires superuser).', _fail, _ok + _fail;
+  ELSE
+    RAISE NOTICE 'ADVISORY: all global postgres default ACLs applied.';
+  END IF;
+END $adv_global$;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- ADVISORY: All defaults for supabase_admin (platform-managed)
+-- ═══════════════════════════════════════════════════════════════════
+-- supabase_admin is managed by the Supabase platform. The SQL Editor
+-- postgres role cannot alter its defaults. Attempt each DDL inside
+-- an exception handler. The read-only preflight verifies the actual
+-- state — if the platform has set safe defaults, preflight passes.
+-- If not, the preflight reports it for founder review.
+
+DO $adv_supa$
+DECLARE _ok INT := 0; _fail INT := 0;
+BEGIN
+  -- Global function defaults
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM anon;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+
+  -- Schema-scoped function defaults
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM service_role;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+
+  -- Schema-scoped table defaults
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM authenticated;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+
+  -- Schema-scoped sequence defaults
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+  BEGIN ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated;
+    _ok := _ok + 1; EXCEPTION WHEN OTHERS THEN _fail := _fail + 1; END;
+
+  IF _fail > 0 THEN
+    RAISE WARNING 'ADVISORY: %/% supabase_admin default ACLs skipped (platform-managed role).'
+      ' This is normal on hosted Supabase. Verify with production_preflight.sql.', _fail, _ok + _fail;
+  ELSE
+    RAISE NOTICE 'ADVISORY: all supabase_admin default ACLs applied.';
+  END IF;
+END $adv_supa$;
 
 
 -- ================================================================

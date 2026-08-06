@@ -15,7 +15,7 @@
     },
     {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
-      "sha256": "2D90B3F2B57306E1B893D1DB65A078618944DB8912C9A8448FC9C37FEBEC1F7F",
+      "sha256": "5202C34DF73EBF60F83C2C56F8DB9F0AC8A053BC3ECDB01BF018D8EC12157BC6",
       "bytes": 47756,
       "role": "RLS privilege hardening - fresh and upgrade paths"
     },
