@@ -1,5 +1,5 @@
 -- ================================================================
--- 003b: RLS PRIVILEGE HARDENING (v3 — production-hardened)
+-- 003b: RLS PRIVILEGE HARDENING (v3 EUR" production-hardened)
 -- ================================================================
 -- Run in a DISPOSABLE Supabase project SQL Editor.
 -- DO NOT run against production.
@@ -10,22 +10,22 @@
 --
 -- Publication readiness is now a SEPARATE read-only preflight gate
 -- (supabase/preflight/production_preflight.sql). 003b no longer
--- aborts on missing published content — it hardens RLS regardless.
+-- aborts on missing published content EUR" it hardens RLS regardless.
 --
 -- Safe re-execution: checks schema_migrations; exits cleanly if
--- already applied (no "0000" migration required — standalone guard).
+-- already applied (no "0000" migration required EUR" standalone guard).
 --
 -- Function signatures (verified from pg_proc / 002 migration source):
 --   public.credit_referral_reward(TEXT, UUID, NUMERIC, TEXT, TEXT, TEXT)
 --   public.credit_ambassador_commission(TEXT, UUID, NUMERIC, TEXT, TEXT)
 --   public.claim_webhook_event(TEXT, TIMESTAMPTZ)
---   public.reject_terms_acceptance_update_delete() — trigger function, no args
+--   public.reject_terms_acceptance_update_delete() EUR" trigger function, no args
 -- ================================================================
 
 BEGIN;
 
 -- ================================================================
--- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksum‑verified)
+-- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksumEUR'verified)
 -- ================================================================
 -- On production, 0000 is never run so schema_migrations may not
 -- exist. Create it if absent before the guard checks.
@@ -176,7 +176,7 @@ BEGIN
         RAISE EXCEPTION 'LEGACY MIGRATION: 003b has no historical checksum. Founder/legal review required.';
       ELSIF _recorded.checksum = _expected THEN
         RAISE NOTICE '============================================================';
-        RAISE NOTICE 'Migration 003b already applied — exiting cleanly.';
+        RAISE NOTICE 'Migration 003b already applied EUR" exiting cleanly.';
         RAISE NOTICE '(Checksum matches, applied at %)', _recorded.applied_at;
         RAISE NOTICE '============================================================';
         RETURN;
@@ -186,12 +186,12 @@ BEGIN
       END IF;
     END IF;
   ELSE
-    RAISE NOTICE 'schema_migrations table not present — first-time run, proceeding.';
+    RAISE NOTICE 'schema_migrations table not present EUR" first-time run, proceeding.';
   END IF;
 END $guard$;
 
 -- ================================================================
--- SECTION 1: PUBLICATION READINESS NOTICE (advisory only — no abort)
+-- SECTION 1: PUBLICATION READINESS NOTICE (advisory only EUR" no abort)
 -- ================================================================
 DO $$ DECLARE
   v_pub_exp INT; v_pub_dest INT;
@@ -220,7 +220,7 @@ END $$;
 
 
 -- ================================================================
--- SECTION 2: PREFLIGHT — Schema Audit
+-- SECTION 2: PREFLIGHT EUR" Schema Audit
 -- ================================================================
 DO $$
 DECLARE
@@ -433,7 +433,7 @@ BEGIN
     AND NOT p.policyname = ANY(v_known_policies);
 
   IF v_unknown IS NOT NULL AND array_length(v_unknown, 1) > 0 THEN
-    RAISE EXCEPTION 'UNEXPECTED POLICIES FOUND — aborting. List: %',
+    RAISE EXCEPTION 'UNEXPECTED POLICIES FOUND EUR" aborting. List: %',
       array_to_string(v_unknown, ', ');
   END IF;
 
@@ -485,9 +485,9 @@ REVOKE INSERT, UPDATE, DELETE ON public.guides                 FROM anon, authen
 -- SECTION 7: COLUMN-LEVEL SELECT GRANTS
 -- ================================================================
 
--- anon: public.users — NO access (no grant, no policy)
+-- anon: public.users EUR" NO access (no grant, no policy)
 
--- anon: public.guides — 29 published-safe columns
+-- anon: public.guides EUR" 29 published-safe columns
 GRANT SELECT (
   id, name, trading_name, status, photo, hero_image,
   bio, why_independent, location, languages, experience,
@@ -498,19 +498,19 @@ GRANT SELECT (
   created_at, updated_at
 ) ON public.guides TO anon;
 
--- anon: public.experiences — 13 public-safe columns
+-- anon: public.experiences EUR" 13 public-safe columns
 GRANT SELECT (
   id, title, duration, difficulty, location, image,
   price, currency, guide_id, badge, rating, reviews, featured
 ) ON public.experiences TO anon;
 
--- anon: public.destinations — 4 public columns
+-- anon: public.destinations EUR" 4 public columns
 GRANT SELECT (name, country, image, guide_count) ON public.destinations TO anon;
 
--- authenticated: public.users — 6 own-row safe columns (includes avatar)
+-- authenticated: public.users EUR" 6 own-row safe columns (includes avatar)
 GRANT SELECT (id, email, name, avatar, role, created_at) ON public.users TO authenticated;
 
--- authenticated: public.guides — same 29 columns as anon
+-- authenticated: public.guides EUR" same 29 columns as anon
 GRANT SELECT (
   id, name, trading_name, status, photo, hero_image,
   bio, why_independent, location, languages, experience,
@@ -521,13 +521,13 @@ GRANT SELECT (
   created_at, updated_at
 ) ON public.guides TO authenticated;
 
--- authenticated: public.experiences — same 13 columns as anon
+-- authenticated: public.experiences EUR" same 13 columns as anon
 GRANT SELECT (
   id, title, duration, difficulty, location, image,
   price, currency, guide_id, badge, rating, reviews, featured
 ) ON public.experiences TO authenticated;
 
--- authenticated: public.destinations — same 4 columns as anon
+-- authenticated: public.destinations EUR" same 4 columns as anon
 GRANT SELECT (name, country, image, guide_count) ON public.destinations TO authenticated;
 
 -- authenticated: public.platform_config (read-only, RLS default deny)
@@ -572,9 +572,9 @@ CREATE POLICY "destinations_select_published"
   ON public.destinations FOR SELECT
   USING (is_published = true);
 
--- No policies on public.platform_config → RLS default deny for anon/authenticated
--- No policies on public.transactions → RLS default deny (authenticated has GRANT but no policy → 0 rows)
--- No policies on Netlify-only tables → RLS default deny for all roles
+-- No policies on public.platform_config ' RLS default deny for anon/authenticated
+-- No policies on public.transactions ' RLS default deny (authenticated has GRANT but no policy ' 0 rows)
+-- No policies on Netlify-only tables ' RLS default deny for all roles
 
 
 -- ================================================================
@@ -635,10 +635,10 @@ END $$;
 -- SECTION 10: DEFAULT PRIVILEGE HARDENING
 -- ================================================================
 -- Two tiers:
---   HARD  — ALTER DEFAULT PRIVILEGES FOR ROLE postgres (global and
+--   HARD  EUR" ALTER DEFAULT PRIVILEGES FOR ROLE postgres (global and
 --           schema-scoped). These are under application control.
 --           Any failure is a hard abort.
---   ADVISORY — FOR ROLE supabase_admin. Supabase SQL Editor runs
+--   ADVISORY EUR" FOR ROLE supabase_admin. Supabase SQL Editor runs
 --           as a managed postgres role that cannot alter defaults
 --           for the platform-managed supabase_admin role. Each
 --           statement is attempted; insufficient_privilege (42501)
@@ -648,15 +648,15 @@ END $$;
 -- because schema-scoped defaults alone cannot reliably undo PUBLIC
 -- EXECUTE behaviour for future functions created outside schema public.
 
--- ── Retroactive: strip sequences from client roles ────────────────
+-- "EUR"EUR Retroactive: strip sequences from client roles "EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR"EUR
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM authenticated;
 
--- ═══════════════════════════════════════════════════════════════════
+-- *******************************************************************
 -- HARD: Global postgres function default (current role = postgres;
 --       PostgreSQL allows a role to alter its own global defaults)
--- ═══════════════════════════════════════════════════════════════════
+-- *******************************************************************
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres
@@ -664,9 +664,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres
   REVOKE EXECUTE ON FUNCTIONS FROM authenticated;
 
--- ═══════════════════════════════════════════════════════════════════
+-- *******************************************************************
 -- HARD: Schema-scoped postgres defaults (application-controlled)
--- ═══════════════════════════════════════════════════════════════════
+-- *******************************************************************
 -- Future functions in public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
@@ -705,9 +705,9 @@ DO $$ BEGIN
   RAISE NOTICE 'Section 10 HARD: global + schema-scoped postgres defaults applied.';
 END $$;
 
--- ═══════════════════════════════════════════════════════════════════
+-- *******************************************************************
 -- ADVISORY: supabase_admin defaults (platform-managed role)
--- ═══════════════════════════════════════════════════════════════════
+-- *******************************************************************
 -- These statements target supabase_admin, which is managed by the
 -- Supabase platform. The SQL Editor postgres role may not have
 -- permission to alter its defaults. Each is attempted; only
@@ -1085,14 +1085,14 @@ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables
              WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
     INSERT INTO public.schema_migrations (version, name, checksum)
-    VALUES ('003b', 'RLS Privilege Hardening — 5 restrictive policies, column grants, default ACLs, function EXECUTE lockdown', '5393486531414C2F975C21A3033187294A60EEA51012D6F7386CC726C0750BED')
+    VALUES ('003b', 'RLS Privilege Hardening EUR" 5 restrictive policies, column grants, default ACLs, function EXECUTE lockdown', '5393486531414C2F975C21A3033187294A60EEA51012D6F7386CC726C0750BED')
     ON CONFLICT (version) DO NOTHING;
     RAISE NOTICE 'schema_migrations: 003b recorded.';
     -- Belt-and-braces: ensure service_role has no write access
     -- to schema_migrations (migration history is DBA-only).
     REVOKE ALL ON public.schema_migrations FROM service_role;
   ELSE
-    RAISE NOTICE 'schema_migrations table not present — migration record not written.';
+    RAISE NOTICE 'schema_migrations table not present EUR" migration record not written.';
   END IF;
 END $record$;
 
