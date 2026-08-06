@@ -19,30 +19,40 @@
 --
 -- Prerequisites: 003b applied (RLS, column grants, function ownership).
 -- Run order on staging: 001..003b then 004, then scenario-c.
--- Safe re-execution: checks schema_migrations; exits cleanly if already applied.
+-- Safe re-execution: checks schema_migrations with checksum verification;
+-- exits cleanly if already applied with matching checksum;
+-- aborts if checksum differs (integrity failure).
 -- ================================================================
 
 BEGIN;
 
 -- ================================================================
--- SECTION 0: SCHEMA_MIGRATIONS GUARD (safe re-execution)
+-- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksum‑verified)
 -- ================================================================
 DO $guard$
 DECLARE
-  _applied BOOLEAN;
+  _expected TEXT := 'E31D5DF971EE776BD7126EB12C65827DBFD374AA3C8D5C79725DF64C63DE6543';
+  _recorded RECORD;
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables
              WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
-    SELECT EXISTS(
-      SELECT 1 FROM public.schema_migrations WHERE version = '004'
-    ) INTO _applied;
-    IF _applied THEN
-      RAISE NOTICE '============================================================';
-      RAISE NOTICE 'Migration 004 already applied — exiting cleanly.';
-      RAISE NOTICE '(Found in schema_migrations at %)',
-        (SELECT applied_at FROM public.schema_migrations WHERE version = '004');
-      RAISE NOTICE '============================================================';
-      RETURN;
+    SELECT version, checksum, applied_at INTO _recorded
+    FROM public.schema_migrations WHERE version = '004';
+
+    IF FOUND THEN
+      IF _recorded.checksum IS NULL THEN
+        RAISE WARNING 'Migration 004 recorded without checksum (legacy record).';
+        RAISE EXCEPTION 'LEGACY MIGRATION: 004 has no historical checksum. Founder/legal review required.';
+      ELSIF _recorded.checksum = _expected THEN
+        RAISE NOTICE '============================================================';
+        RAISE NOTICE 'Migration 004 already applied — exiting cleanly.';
+        RAISE NOTICE '(Checksum matches, applied at %)', _recorded.applied_at;
+        RAISE NOTICE '============================================================';
+        RETURN;
+      ELSE
+        RAISE EXCEPTION 'MIGRATION INTEGRITY FAILURE: 004.\n  Recorded checksum: %\n  Expected checksum: %\n  The migration file has changed since it was first applied.\n  Restore the original file or obtain written founder authorisation.',
+          _recorded.checksum, _expected;
+      END IF;
     END IF;
   ELSE
     RAISE NOTICE 'schema_migrations table not present — first-time run, proceeding.';
@@ -121,8 +131,13 @@ END $$;
 
 
 -- ================================================================
--- SECTION 3: AUDIT TABLE (append-only)
+-- SECTION 3: AUDIT TABLE (append-only, trigger‑written)
 -- ================================================================
+-- The SECURITY DEFINER trigger public.record_account_status_change()
+-- writes every audit record as postgres. service_role does NOT
+-- need direct INSERT — it only reads the audit trail (SELECT).
+-- Direct INSERT is revoked to keep the audit trail append‑only
+-- through the single authorised code path.
 CREATE TABLE IF NOT EXISTS public.account_status_audit (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.users(id),
@@ -135,15 +150,13 @@ CREATE TABLE IF NOT EXISTS public.account_status_audit (
 
 ALTER TABLE public.account_status_audit ENABLE ROW LEVEL SECURITY;
 
--- service_role: SELECT + INSERT only (append-only; no UPDATE/DELETE)
--- NOTE: 003b narrowed default privileges grant service_role=arwd on new tables,
--- so explicitly revoke UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER here.
-GRANT SELECT, INSERT ON public.account_status_audit TO service_role;
-REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.account_status_audit FROM service_role;
+-- service_role: SELECT only (read‑only audit review)
+GRANT SELECT ON public.account_status_audit TO service_role;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.account_status_audit FROM service_role;
 REVOKE SELECT, INSERT, UPDATE, DELETE ON public.account_status_audit FROM anon, authenticated, PUBLIC;
 
 DO $$ BEGIN
-  RAISE NOTICE 'account_status_audit ready (RLS enabled, append-only for service_role)';
+  RAISE NOTICE 'account_status_audit ready (RLS enabled, trigger‑written, service_role SELECT only)';
 END $$;
 
 
@@ -247,15 +260,18 @@ BEGIN
     RAISE NOTICE '  account_status_audit RLS enabled';
   ELSE RAISE WARNING '  account_status_audit RLS NOT enabled'; v_errors := v_errors + 1; END IF;
 
-  -- 4. Audit table is append-only for service_role (SELECT+INSERT, no UPDATE/DELETE)
+  -- 4. Audit table is trigger‑written (service_role SELECT only, no INSERT)
   IF EXISTS (SELECT 1 FROM information_schema.role_table_grants
              WHERE grantee='service_role' AND table_name='account_status_audit'
-             AND table_schema='public' AND privilege_type='INSERT')
+             AND table_schema='public' AND privilege_type='SELECT')
      AND NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
              WHERE grantee='service_role' AND table_name='account_status_audit'
-             AND table_schema='public' AND privilege_type='DELETE') THEN
-    RAISE NOTICE '  service_role: SELECT+INSERT only on account_status_audit';
-  ELSE RAISE WARNING '  account_status_audit service_role privileges unexpected'; v_errors := v_errors + 1; END IF;
+             AND table_schema='public' AND privilege_type='INSERT') THEN
+    RAISE NOTICE '  service_role: SELECT only on account_status_audit (trigger‑written)';
+  ELSE
+    RAISE WARNING '  account_status_audit service_role privileges unexpected (expected SELECT only)';
+    v_errors := v_errors + 1;
+  END IF;
 
   -- 5. anon/authenticated cannot SELECT account_status_audit
   IF NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
@@ -310,7 +326,7 @@ DO $$ BEGIN
   RAISE NOTICE '004_account_suspension: MIGRATION COMPLETE';
   RAISE NOTICE 'account_status: active | suspended | deactivated (default active).';
   RAISE NOTICE 'Changes made ONLY by admin via service-role path; users cannot self-change.';
-  RAISE NOTICE 'Audit: account_status_audit (append-only, RLS, service_role SELECT+INSERT).';
+  RAISE NOTICE 'Audit: account_status_audit (trigger‑written by record_account_status_change(), RLS, service_role SELECT only).';
   RAISE NOTICE 'History preserved: no deletes, no cascades on bookings/payments.';
   RAISE NOTICE 'Trigger function owned by postgres, EXECUTE revoked from all roles.';
 END $$;
@@ -320,10 +336,13 @@ DO $record$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables
              WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
-    INSERT INTO public.schema_migrations (version, name)
-    VALUES ('004', 'Account Suspension — account_status column, audit table, trigger, visibility grants')
+    INSERT INTO public.schema_migrations (version, name, checksum)
+    VALUES ('004', 'Account Suspension — account_status column, audit table, trigger, visibility grants', 'E31D5DF971EE776BD7126EB12C65827DBFD374AA3C8D5C79725DF64C63DE6543')
     ON CONFLICT (version) DO NOTHING;
     RAISE NOTICE 'schema_migrations: 004 recorded.';
+    -- Belt-and-braces: ensure service_role has no write access
+    -- to schema_migrations (migration history is DBA-only).
+    REVOKE ALL ON public.schema_migrations FROM service_role;
   ELSE
     RAISE NOTICE 'schema_migrations table not present — migration record not written.';
   END IF;

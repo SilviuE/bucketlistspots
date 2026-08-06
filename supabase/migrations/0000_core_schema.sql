@@ -14,10 +14,14 @@
 BEGIN;
 
 -- ================================================================
--- PRE-MIGRATION GUARD: Check schema_migrations for idempotency
+-- PRE-MIGRATION GUARD: schema_migrations checksum verification
 -- ================================================================
--- If schema_migrations does not exist yet (first run), create it.
--- Then check if 0000 is already recorded.
+-- Creates the schema_migrations tracking table on first-ever run.
+-- Checksum rules (founder‑approved):
+--   same version + same checksum  → clean already‑applied exit
+--   same version + different checksum → HARD ABORT (tamper detect)
+--   same version + NULL checksum  → LEGACY ABORT (founder review)
+--   no historical checksum is ever silently overwritten.
 CREATE TABLE IF NOT EXISTS public.schema_migrations (
   version TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -25,21 +29,38 @@ CREATE TABLE IF NOT EXISTS public.schema_migrations (
   checksum TEXT
 );
 
+-- schema_migrations is a migration‑tracking table, not an
+-- application table. No client role may read or write it.
+-- The default ACL grants service_role=arwd on all tables, so
+-- explicitly revoke everything. Migrations run as postgres
+-- (SQL Editor), not as service_role.
+REVOKE ALL ON public.schema_migrations FROM anon, authenticated, PUBLIC, service_role;
+
 DO $guard$
 DECLARE
-  _applied BOOLEAN;
+  _expected TEXT := 'F35FFACD68A2B4ABE180CC8A3632767596B47F198821A8AB445DB56440B9E067';
+  _recorded RECORD;
 BEGIN
-  SELECT EXISTS(
-    SELECT 1 FROM public.schema_migrations WHERE version = '0000'
-  ) INTO _applied;
-  IF _applied THEN
-    RAISE NOTICE '============================================================';
-    RAISE NOTICE 'Migration 0000 already applied — exiting cleanly.';
-    RAISE NOTICE '(Found in schema_migrations at %)',
-      (SELECT applied_at FROM public.schema_migrations WHERE version = '0000');
-    RAISE NOTICE '============================================================';
-    RETURN;
+  SELECT version, checksum, applied_at INTO _recorded
+  FROM public.schema_migrations WHERE version = '0000';
+
+  IF FOUND THEN
+    IF _recorded.checksum IS NULL THEN
+      RAISE WARNING 'Migration 0000 recorded without checksum (legacy record).';
+      RAISE EXCEPTION 'LEGACY MIGRATION: 0000 has no historical checksum. Founder/legal review required before re‑run.';
+    ELSIF _recorded.checksum = _expected THEN
+      RAISE NOTICE '============================================================';
+      RAISE NOTICE 'Migration 0000 already applied — exiting cleanly.';
+      RAISE NOTICE '(Checksum matches, applied at %)', _recorded.applied_at;
+      RAISE NOTICE '============================================================';
+      RETURN;
+    ELSE
+      RAISE EXCEPTION 'MIGRATION INTEGRITY FAILURE: 0000.\n  Recorded checksum: %\n  Expected checksum: %\n  The migration file has changed since it was first applied.\n  Restore the original file or obtain written founder authorisation.',
+        _recorded.checksum, _expected;
+    END IF;
   END IF;
+
+  RAISE NOTICE 'Migration 0000: first‑time run. Expected SHA‑256: %', _expected;
 END $guard$;
 
 
@@ -598,9 +619,13 @@ CREATE TABLE IF NOT EXISTS public.account_status_audit (
 
 ALTER TABLE public.account_status_audit ENABLE ROW LEVEL SECURITY;
 
--- Append-only: service_role gets SELECT + INSERT only
-GRANT SELECT, INSERT ON public.account_status_audit TO service_role;
-REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.account_status_audit FROM service_role;
+-- Append-only audit trail. The SECURITY DEFINER trigger
+-- public.record_account_status_change() writes every record
+-- running as postgres. service_role needs SELECT only
+-- (read‑only audit review). Direct INSERT is unnecessary
+-- and is revoked.
+GRANT SELECT ON public.account_status_audit TO service_role;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.account_status_audit FROM service_role;
 REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.account_status_audit FROM anon, authenticated, PUBLIC;
 
 CREATE INDEX IF NOT EXISTS idx_account_status_audit_user_id ON public.account_status_audit(user_id);
@@ -611,11 +636,13 @@ CREATE INDEX IF NOT EXISTS idx_account_status_audit_created_at ON public.account
 -- 19. ACCOUNT STATUS AUDIT TRIGGER
 -- ================================================================
 -- Fires on users UPDATE when account_status actually changes.
+-- SECURITY DEFINER owned by postgres. search_path = '' (empty) —
+-- every table and function reference is schema‑qualified.
 CREATE OR REPLACE FUNCTION public.record_account_status_change()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 BEGIN
   IF OLD.account_status IS DISTINCT FROM NEW.account_status THEN
@@ -764,8 +791,12 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
 -- ================================================================
 -- 23. RECORD MIGRATION IN schema_migrations
 -- ================================================================
-INSERT INTO public.schema_migrations (version, name)
-VALUES ('0000', 'Core Schema — all tables, constraints, indexes, deny-by-default RLS, default ACLs, RPCs')
+-- Belt‑and‑braces: revoke service_role again in case default ACLs
+-- applied retroactively within the same transaction.
+REVOKE ALL ON public.schema_migrations FROM service_role;
+
+INSERT INTO public.schema_migrations (version, name, checksum)
+VALUES ('0000', 'Core Schema — all tables, constraints, indexes, deny-by-default RLS, default ACLs, RPCs', 'F35FFACD68A2B4ABE180CC8A3632767596B47F198821A8AB445DB56440B9E067')
 ON CONFLICT (version) DO NOTHING;
 
 DO $done$
@@ -784,9 +815,11 @@ BEGIN
   RAISE NOTICE '  posts, account_status_audit';
   RAISE NOTICE '  + schema_migrations (migration tracking)';
   RAISE NOTICE '';
-  RAISE NOTICE 'RLS: enabled on all 19 application tables.';
+  RAISE NOTICE 'RLS: enabled on all 18 application tables.';
   RAISE NOTICE 'Policies: ZERO (deny-by-default).';
   RAISE NOTICE 'Default ACLs: postgres-narrowed for service_role.';
+  RAISE NOTICE '';
+  RAISE NOTICE 'schema_migrations: no client‑role access (read‑only DBA table).';
   RAISE NOTICE '';
   RAISE NOTICE 'Next: apply ordered feature migrations (0001+),';
   RAISE NOTICE 'then staging seed (supabase/seed/staging_seed.sql).';

@@ -25,24 +25,32 @@
 BEGIN;
 
 -- ================================================================
--- SECTION 0: SCHEMA_MIGRATIONS GUARD (safe re-execution)
+-- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksum‑verified)
 -- ================================================================
 DO $guard$
 DECLARE
-  _applied BOOLEAN;
+  _expected TEXT := '5393486531414C2F975C21A3033187294A60EEA51012D6F7386CC726C0750BED';
+  _recorded RECORD;
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables
              WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
-    SELECT EXISTS(
-      SELECT 1 FROM public.schema_migrations WHERE version = '003b'
-    ) INTO _applied;
-    IF _applied THEN
-      RAISE NOTICE '============================================================';
-      RAISE NOTICE 'Migration 003b already applied — exiting cleanly.';
-      RAISE NOTICE '(Found in schema_migrations at %)',
-        (SELECT applied_at FROM public.schema_migrations WHERE version = '003b');
-      RAISE NOTICE '============================================================';
-      RETURN;
+    SELECT version, checksum, applied_at INTO _recorded
+    FROM public.schema_migrations WHERE version = '003b';
+
+    IF FOUND THEN
+      IF _recorded.checksum IS NULL THEN
+        RAISE WARNING 'Migration 003b recorded without checksum (legacy record).';
+        RAISE EXCEPTION 'LEGACY MIGRATION: 003b has no historical checksum. Founder/legal review required.';
+      ELSIF _recorded.checksum = _expected THEN
+        RAISE NOTICE '============================================================';
+        RAISE NOTICE 'Migration 003b already applied — exiting cleanly.';
+        RAISE NOTICE '(Checksum matches, applied at %)', _recorded.applied_at;
+        RAISE NOTICE '============================================================';
+        RETURN;
+      ELSE
+        RAISE EXCEPTION 'MIGRATION INTEGRITY FAILURE: 003b.\n  Recorded checksum: %\n  Expected checksum: %\n  The migration file has changed since it was first applied.\n  Restore the original file or obtain written founder authorisation.',
+          _recorded.checksum, _expected;
+      END IF;
     END IF;
   ELSE
     RAISE NOTICE 'schema_migrations table not present — first-time run, proceeding.';
@@ -828,10 +836,13 @@ DO $record$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables
              WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
-    INSERT INTO public.schema_migrations (version, name)
-    VALUES ('003b', 'RLS Privilege Hardening — 5 restrictive policies, column grants, default ACLs, function EXECUTE lockdown')
+    INSERT INTO public.schema_migrations (version, name, checksum)
+    VALUES ('003b', 'RLS Privilege Hardening — 5 restrictive policies, column grants, default ACLs, function EXECUTE lockdown', '5393486531414C2F975C21A3033187294A60EEA51012D6F7386CC726C0750BED')
     ON CONFLICT (version) DO NOTHING;
     RAISE NOTICE 'schema_migrations: 003b recorded.';
+    -- Belt-and-braces: ensure service_role has no write access
+    -- to schema_migrations (migration history is DBA-only).
+    REVOKE ALL ON public.schema_migrations FROM service_role;
   ELSE
     RAISE NOTICE 'schema_migrations table not present — migration record not written.';
   END IF;
