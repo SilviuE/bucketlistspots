@@ -1,26 +1,28 @@
-{
-  "commit": "acfc4b09d25d43183c79f3e8c0eb6125e8686671",
+﻿{
+  "commit": "PLACEHOLDER",
   "branch": "review/terms-sections-6-7",
-  "generated_at": "2026-08-06T18:45:00+01:00",
+  "generated_at": "2026-08-06T20:57:00+01:00",
   "generated_by": "Get-FileHash -Algorithm SHA256",
+  "verification_script": "supabase/manifest/verify_checksums.ps1",
+  "note": "This manifest records the full-file SHA-256 of every migration, seed, preflight, test, doc and runbook file in the authorised staging chain. The embedded checksum constants inside migration files are database migration-history guards and are NOT independent file-verification hashes. Use verify_checksums.ps1 for file-integrity verification.",
   "files": [
     {
       "path": "supabase/migrations/0000_core_schema.sql",
       "sha256": "3E8A31316BB9CD90F3921427BE4295AA5071532AB3D925CA5125C406A3CD9F9A",
       "bytes": 32999,
-      "role": "fresh-install baseline schema — never run on production"
+      "role": "fresh-install baseline schema - never run on production"
     },
     {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
-      "sha256": "AE3CFD570A9779D5F5B2BB3F34AA0DD1A7A7E60D9AF5FB453E3D574CA92730E6",
-      "bytes": 43793,
-      "role": "RLS privilege hardening — fresh and upgrade paths"
+      "sha256": "F4AEB48319BFE1A53169AE7FF8D979FE669CDFEAD9BBC4BE7B97321B2C41E69C",
+      "bytes": 45504,
+      "role": "RLS privilege hardening - fresh and upgrade paths"
     },
     {
       "path": "supabase/migrations/004_account_suspension.sql",
-      "sha256": "3180C248898F0FC689417877597CF768F6A95EF254A9F51D2B4F21B80AA5920E",
-      "bytes": 17916,
-      "role": "account suspension + audit trail"
+      "sha256": "FE20932F0D450E3AB09B91DD6D73B019FEB1712907864601B4A7D47BE94C72C6",
+      "bytes": 19311,
+      "role": "account suspension + trigger-written audit trail"
     },
     {
       "path": "supabase/seed/staging_seed.sql",
@@ -42,14 +44,14 @@
     },
     {
       "path": "supabase/docs/checksum_explanation.md",
-      "sha256": "16FC14CACD5A9096F91091598A4E63335B87311C7835F344D107DF27EB05FFF6",
-      "bytes": 4945,
+      "sha256": "3FD1E03EF72D182DB61E34DD22897CFBE216245F9E5CBC25DE200858F374B8C7",
+      "bytes": 3178,
       "role": "embedded-vs-full-file checksum documentation"
     },
     {
       "path": "supabase/runbooks/fresh_staging_installation.md",
-      "sha256": "561225F7FFC82B0DFD0B5A90CA3724C1F7158B777D80870928F9EF556C8887CC",
-      "bytes": 6188,
+      "sha256": "DED0F661FD247D4D97DB07C110CF9947AB76CCFEDFE3C5799469E8C1CD949B39",
+      "bytes": 5531,
       "role": "fresh staging installation runbook"
     },
     {
@@ -57,6 +59,18 @@
       "sha256": "6BF56A2594778764C819236D2C5E398B3172E133B8E4FCF5D1BDA83663CCA81F",
       "bytes": 6695,
       "role": "production upgrade runbook"
+    },
+    {
+      "path": "supabase/manifest/verify_checksums.ps1",
+      "sha256": "65F17471A6A9986DB28B0F55950E4A1075360E797A9579C2694B9838316B772E",
+      "bytes": 4630,
+      "role": "full-file SHA-256 verification script"
+    },
+    {
+      "path": "supabase/evidence/phaseb_execution_transcript.txt",
+      "sha256": "C1F9E47D3FC493BB61E6E2C95532BEEE79D21F8E2C99F42B16F852A5A9912F6B",
+      "bytes": 3863,
+      "role": "redacted disposable DB execution transcript"
     }
   ]
 }
