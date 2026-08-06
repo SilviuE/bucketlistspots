@@ -45,7 +45,7 @@
     },
     {
       "path": "supabase/test/staging_verification.sql",
-      "sha256": "64F3CCB3CB638C46BCB88B8D668D783DBB8F276FBF34A03C9DE0996DEBFC770C",
+      "sha256": "C8D355B271DC559209E65F013BE7267DE234C5B71C2D281608FC00280AB97D3C",
       "bytes": 18352,
       "role": "staging-safe post-install verification (Supabase SQL Editor)"
     },
