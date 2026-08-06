@@ -162,7 +162,18 @@ foreach ($f in ($manifest.files | Sort-Object path)) {
   }
 
   try {
-    $actual = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash
+    # Read raw bytes, normalise CRLF to LF before hashing.
+    # This makes verification independent of core.autocrlf and
+    # line-ending conversion on checkout. The canonical content
+    # is defined as the file text with all \r\n sequences
+    # replaced by \n.
+    $rawBytes = [System.IO.File]::ReadAllBytes($filePath)
+    $text = [System.Text.Encoding]::UTF8.GetString($rawBytes)
+    $normalised = $text -replace "`r`n", "`n"
+    $normalisedBytes = [System.Text.Encoding]::UTF8.GetBytes($normalised)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $hashBytes = $sha.ComputeHash($normalisedBytes)
+    $actual = [BitConverter]::ToString($hashBytes) -replace '-', ''
   } catch {
     Write-Host "  ERROR    $($f.path) - could not compute hash: $_" -ForegroundColor Red
     $failed++
