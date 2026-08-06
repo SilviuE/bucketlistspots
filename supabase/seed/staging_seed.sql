@@ -1,7 +1,7 @@
 -- ================================================================
 -- STAGING-ONLY SEED DATA
 -- ================================================================
--- ⚠️  WARNING: STAGING ONLY — NEVER RUN ON PRODUCTION ⚠️
+--   WARNING: STAGING ONLY - NEVER RUN ON PRODUCTION 
 --
 -- This file inserts synthetic test data for a fresh staging
 -- environment deployment. All data is clearly fake/test data
@@ -45,7 +45,7 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- ================================================================
--- TEST GUIDES (draft — not visible to anon)
+-- TEST GUIDES (draft - not visible to anon)
 -- ================================================================
 INSERT INTO public.guides (id, name, trading_name, status, location, bio, price_currency, price)
 VALUES
@@ -58,8 +58,8 @@ ON CONFLICT (id) DO NOTHING;
 -- ================================================================
 INSERT INTO public.experiences (id, title, duration, difficulty, location, image, price, currency, guide_id, rating, reviews, is_published)
 VALUES
-  ('e0000000-0000-0000-0000-000000000001', 'Kilimanjaro Machame Route — 7 Days', '7 days', 'Challenging', 'Tanzania', '/images/experiences/kilimanjaro.jpg', 2500.00, 'usd', 'guide-staging-pub', 4.8, 12, true),
-  ('e0000000-0000-0000-0000-000000000002', 'Inca Trail to Machu Picchu — 4 Days', '4 days', 'Moderate', 'Peru', '/images/experiences/inca-trail.jpg', 1800.00, 'usd', 'guide-staging-featured', 4.9, 8, true)
+  ('e0000000-0000-0000-0000-000000000001', 'Kilimanjaro Machame Route - 7 Days', '7 days', 'Challenging', 'Tanzania', '/images/experiences/kilimanjaro.jpg', 2500.00, 'usd', 'guide-staging-pub', 4.8, 12, true),
+  ('e0000000-0000-0000-0000-000000000002', 'Inca Trail to Machu Picchu - 4 Days', '4 days', 'Moderate', 'Peru', '/images/experiences/inca-trail.jpg', 1800.00, 'usd', 'guide-staging-featured', 4.9, 8, true)
 ON CONFLICT (id) DO NOTHING;
 
 
@@ -108,7 +108,7 @@ ON CONFLICT (id) DO NOTHING;
 -- ================================================================
 INSERT INTO public.posts (id, user_id, author_role, author_name, content)
 VALUES
-  ('post-staging-001', '22222222-2222-2222-2222-222222222222', 'guide', 'Kibo Guides', 'New season dates announced for Kilimanjaro expeditions — book now for September departures!')
+  ('post-staging-001', '22222222-2222-2222-2222-222222222222', 'guide', 'Kibo Guides', 'New season dates announced for Kilimanjaro expeditions - book now for September departures!')
 ON CONFLICT (id) DO NOTHING;
 
 

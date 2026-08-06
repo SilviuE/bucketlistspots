@@ -4,7 +4,7 @@
 -- Purpose:
 --   Add an account_status column to public.users (active | suspended | deactivated)
 --   with an append-only audit trail. Booking history, payment records, and
---   prior audit evidence are PRESERVED — no deletes, no cascades.
+--   prior audit evidence are PRESERVED - no deletes, no cascades.
 --
 -- Design constraints:
 --   - account_status is a separate column. It is NEVER a role value.
@@ -27,10 +27,10 @@
 BEGIN;
 
 -- ================================================================
--- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksum‑verified)
+-- SECTION 0: SCHEMA_MIGRATIONS GUARD (checksum-verified)
 -- ================================================================
 -- Production bootstrapping: create schema_migrations if it does
--- not yet exist (belt‑and‑braces; 003b normally creates it).
+-- not yet exist (belt-and-braces; 003b normally creates it).
 CREATE TABLE IF NOT EXISTS public.schema_migrations (
   version TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -172,7 +172,7 @@ BEGIN
         RAISE EXCEPTION 'LEGACY MIGRATION: 004 has no historical checksum. Founder/legal review required.';
       ELSIF _recorded.checksum = _expected THEN
         RAISE NOTICE '============================================================';
-        RAISE NOTICE 'Migration 004 already applied — exiting cleanly.';
+        RAISE NOTICE 'Migration 004 already applied - exiting cleanly.';
         RAISE NOTICE '(Checksum matches, applied at %)', _recorded.applied_at;
         RAISE NOTICE '============================================================';
         RETURN;
@@ -182,12 +182,12 @@ BEGIN
       END IF;
     END IF;
   ELSE
-    RAISE NOTICE 'schema_migrations table not present — first-time run, proceeding.';
+    RAISE NOTICE 'schema_migrations table not present - first-time run, proceeding.';
   END IF;
 END $guard$;
 
 -- ================================================================
--- SECTION 1: PREFLIGHT — users table baseline
+-- SECTION 1: PREFLIGHT - users table baseline
 -- ================================================================
 DO $$
 DECLARE v_missing TEXT[];
@@ -209,7 +209,7 @@ END $$;
 
 
 -- ================================================================
--- SECTION 2: SCHEMA — status columns on users
+-- SECTION 2: SCHEMA - status columns on users
 -- ================================================================
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -258,12 +258,12 @@ END $$;
 
 
 -- ================================================================
--- SECTION 3: AUDIT TABLE (append-only, trigger‑written)
+-- SECTION 3: AUDIT TABLE (append-only, trigger-written)
 -- ================================================================
 -- The SECURITY DEFINER trigger public.record_account_status_change()
 -- writes every audit record as postgres. service_role does NOT
--- need direct INSERT — it only reads the audit trail (SELECT).
--- Direct INSERT is revoked to keep the audit trail append‑only
+-- need direct INSERT - it only reads the audit trail (SELECT).
+-- Direct INSERT is revoked to keep the audit trail append-only
 -- through the single authorised code path.
 CREATE TABLE IF NOT EXISTS public.account_status_audit (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -277,20 +277,20 @@ CREATE TABLE IF NOT EXISTS public.account_status_audit (
 
 ALTER TABLE public.account_status_audit ENABLE ROW LEVEL SECURITY;
 
--- service_role: SELECT only (read‑only audit review)
+-- service_role: SELECT only (read-only audit review)
 GRANT SELECT ON public.account_status_audit TO service_role;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.account_status_audit FROM service_role;
 REVOKE SELECT, INSERT, UPDATE, DELETE ON public.account_status_audit FROM anon, authenticated, PUBLIC;
 
 DO $$ BEGIN
-  RAISE NOTICE 'account_status_audit ready (RLS enabled, trigger‑written, service_role SELECT only)';
+  RAISE NOTICE 'account_status_audit ready (RLS enabled, trigger-written, service_role SELECT only)';
 END $$;
 
 
 -- ================================================================
--- SECTION 4: TRIGGER — record status changes atomically
+-- SECTION 4: TRIGGER - record status changes atomically
 -- ================================================================
--- SECURITY DEFINER owned by postgres → fires under postgres privileges.
+-- SECURITY DEFINER owned by postgres -> fires under postgres privileges.
 -- Only fires when account_status actually changes.
 CREATE OR REPLACE FUNCTION public.record_account_status_change()
 RETURNS TRIGGER
@@ -306,7 +306,7 @@ BEGIN
   RETURN NEW;
 END $$;
 
--- Trigger creation is not naturally idempotent (no IF NOT EXISTS) → guard via pg_trigger
+-- Trigger creation is not naturally idempotent (no IF NOT EXISTS) -> guard via pg_trigger
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger
                  WHERE tgname = 'trg_users_account_status_audit'
@@ -387,14 +387,14 @@ BEGIN
     RAISE NOTICE '  account_status_audit RLS enabled';
   ELSE RAISE WARNING '  account_status_audit RLS NOT enabled'; v_errors := v_errors + 1; END IF;
 
-  -- 4. Audit table is trigger‑written (service_role SELECT only, no INSERT)
+  -- 4. Audit table is trigger-written (service_role SELECT only, no INSERT)
   IF EXISTS (SELECT 1 FROM information_schema.role_table_grants
              WHERE grantee='service_role' AND table_name='account_status_audit'
              AND table_schema='public' AND privilege_type='SELECT')
      AND NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
              WHERE grantee='service_role' AND table_name='account_status_audit'
              AND table_schema='public' AND privilege_type='INSERT') THEN
-    RAISE NOTICE '  service_role: SELECT only on account_status_audit (trigger‑written)';
+    RAISE NOTICE '  service_role: SELECT only on account_status_audit (trigger-written)';
   ELSE
     RAISE WARNING '  account_status_audit service_role privileges unexpected (expected SELECT only)';
     v_errors := v_errors + 1;
@@ -453,7 +453,7 @@ DO $$ BEGIN
   RAISE NOTICE '004_account_suspension: MIGRATION COMPLETE';
   RAISE NOTICE 'account_status: active | suspended | deactivated (default active).';
   RAISE NOTICE 'Changes made ONLY by admin via service-role path; users cannot self-change.';
-  RAISE NOTICE 'Audit: account_status_audit (trigger‑written by record_account_status_change(), RLS, service_role SELECT only).';
+  RAISE NOTICE 'Audit: account_status_audit (trigger-written by record_account_status_change(), RLS, service_role SELECT only).';
   RAISE NOTICE 'History preserved: no deletes, no cascades on bookings/payments.';
   RAISE NOTICE 'Trigger function owned by postgres, EXECUTE revoked from all roles.';
 END $$;
@@ -464,14 +464,14 @@ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables
              WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN
     INSERT INTO public.schema_migrations (version, name, checksum)
-    VALUES ('004', 'Account Suspension — account_status column, audit table, trigger, visibility grants', 'E31D5DF971EE776BD7126EB12C65827DBFD374AA3C8D5C79725DF64C63DE6543')
+    VALUES ('004', 'Account Suspension - account_status column, audit table, trigger, visibility grants', 'E31D5DF971EE776BD7126EB12C65827DBFD374AA3C8D5C79725DF64C63DE6543')
     ON CONFLICT (version) DO NOTHING;
     RAISE NOTICE 'schema_migrations: 004 recorded.';
     -- Belt-and-braces: ensure service_role has no write access
     -- to schema_migrations (migration history is DBA-only).
     REVOKE ALL ON public.schema_migrations FROM service_role;
   ELSE
-    RAISE NOTICE 'schema_migrations table not present — migration record not written.';
+    RAISE NOTICE 'schema_migrations table not present - migration record not written.';
   END IF;
 END $record$;
 
