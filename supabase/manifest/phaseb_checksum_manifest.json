@@ -4,7 +4,7 @@
   "generated_at": "2026-08-06T20:57:00+01:00",
   "generated_by": "Get-FileHash -Algorithm SHA256",
   "verification_script": "supabase/manifest/verify_checksums.ps1",
-  "note": "This manifest records the full-file SHA-256 of every migration, seed, preflight, test, doc and runbook file in the authorised staging chain. The embedded checksum constants inside migration files are database migration-history guards and are NOT independent file-verification hashes. Use verify_checksums.ps1 for file-integrity verification.",
+  "note": "This manifest records the full-file SHA-256 of every migration, seed, preflight, test, doc, runbook and evidence file in the authorised staging chain. It does NOT include the manifest JSON or verify_checksums.ps1 (tooling, self-referential). The embedded checksum constants inside migration files are database migration-history guards and are NOT independent file-verification hashes. Use verify_checksums.ps1 for file-integrity verification.",
   "files": [
     {
       "path": "supabase/migrations/0000_core_schema.sql",
@@ -59,12 +59,6 @@
       "sha256": "6BF56A2594778764C819236D2C5E398B3172E133B8E4FCF5D1BDA83663CCA81F",
       "bytes": 6695,
       "role": "production upgrade runbook"
-    },
-    {
-      "path": "supabase/manifest/verify_checksums.ps1",
-      "sha256": "65F17471A6A9986DB28B0F55950E4A1075360E797A9579C2694B9838316B772E",
-      "bytes": 4630,
-      "role": "full-file SHA-256 verification script"
     },
     {
       "path": "supabase/evidence/phaseb_execution_transcript.txt",

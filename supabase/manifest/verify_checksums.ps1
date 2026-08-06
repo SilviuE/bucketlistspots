@@ -56,6 +56,10 @@ foreach ($f in $manifest.files) {
 }
 
 $scanDirs = @("supabase\migrations", "supabase\seed", "supabase\preflight", "supabase\test", "supabase\docs", "supabase\runbooks", "supabase\evidence")
+# Note: supabase/manifest is NOT scanned. The manifest JSON and this
+# script are tooling, not content. They cannot self-verify because
+# the manifest cannot contain its own checksum or the checksum of
+# the script that reads it.
 $actualFiles = @{}
 foreach ($dir in $scanDirs) {
   $dirFull = Join-Path $RepoRoot $dir
