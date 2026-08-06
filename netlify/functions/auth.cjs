@@ -43,7 +43,7 @@ function createServiceClient() {
 // RLS policies defined on the target table. Use only where a tested
 // RLS policy intentionally allows the operation.
 function createUserClient(token) {
-  return createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+  return createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY, {
     db: { schema: 'public' },
     global: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
   });
@@ -111,11 +111,11 @@ async function authenticate(event, options = {}) {
     return json({ error: 'Invalid or expired token' }, 401);
   }
 
-  // Step 3: Load database profile (source of truth for role)
+  // Step 3: Load database profile (source of truth for role + account status)
   const sr = createServiceClient();
   const { data: profile, error: profileErr } = await sr
     .from('users')
-    .select('id, email, name, role')
+    .select('id, email, name, role, account_status')
     .eq('id', verifiedUser.id)
     .maybeSingle();
 
@@ -127,7 +127,14 @@ async function authenticate(event, options = {}) {
     return json({ error: 'User account not found' }, 401);
   }
 
-  // Step 4: Check required role (from DATABASE, never from token payload)
+  // Step 4: Account status check — account_status is a SEPARATE column from role.
+  // Only 'active' accounts may perform authenticated actions. This is NOT a role
+  // value; roles remain traveller/guide/ambassador/admin only.
+  if (profile.account_status && profile.account_status !== 'active') {
+    return json({ error: 'Account not active' }, 403);
+  }
+
+  // Step 5: Check required role (from DATABASE, never from token payload)
   if (requiredRole && profile.role !== requiredRole) {
     return json({ error: `Access denied. Required role: ${requiredRole}` }, 403);
   }
@@ -192,11 +199,14 @@ async function authenticateGuideOrAmbassador(event) {
   const sr = createServiceClient();
   const { data: profile, error: profileErr } = await sr
     .from('users')
-    .select('id, email, name, role')
+    .select('id, email, name, role, account_status')
     .eq('id', verifiedUser.id)
     .maybeSingle();
 
   if (profileErr || !profile) return json({ error: 'User account not found' }, 401);
+  if (profile.account_status && profile.account_status !== 'active') {
+    return json({ error: 'Account not active' }, 403);
+  }
   if (!['guide', 'ambassador'].includes(profile.role)) {
     return json({ error: 'Only guides and ambassadors can perform this action' }, 403);
   }

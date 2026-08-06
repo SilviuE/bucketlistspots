@@ -1286,6 +1286,52 @@ async function handleAdminPlatformConfig(event) {
   }
 }
 
+// ─── Admin: Account Suspension / Deactivation ─────────────────────────
+// POST /api/admin/user-status — suspend, reactivate, or deactivate a user.
+// Preserves booking history, payment records, and audit evidence:
+//   - No deletes, no cascades. Only account_status + suspended_* fields change.
+//   - The DB trigger (004_account_suspension.sql) records every change in
+//     account_status_audit (append-only).
+// Body: { userId, status: 'active'|'suspended'|'deactivated', reason? }
+async function handleAdminUserStatus(event) {
+  if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  try {
+    const authResult = await authenticateAdmin(event);
+    if (authResult.statusCode) return authResult;
+    const { supabase: sr, user: adminUser } = authResult;
+
+    const body = reqBody(event);
+    const { userId, status, reason } = body;
+    if (!userId) return json({ error: 'Missing userId' }, 400);
+    if (!['active', 'suspended', 'deactivated'].includes(status)) {
+      return json({ error: 'Invalid status. Allowed: active, suspended, deactivated' }, 400);
+    }
+
+    // Only the status + suspension audit fields change. Everything else
+    // (email, bookings, payment reports, referral history) is untouched.
+    const updates = {
+      account_status: status,
+      suspended_reason: status === 'active' ? null : (reason || null),
+      suspended_at: status === 'active' ? null : new Date().toISOString(),
+      suspended_by: status === 'active' ? null : adminUser.id,
+    };
+
+    const { data, error } = await sr
+      .from('users')
+      .update(updates)
+      .eq('id', userId)
+      .select('id, email, name, role, account_status')
+      .maybeSingle();
+
+    if (error) return json({ error: error.message }, 500);
+    if (!data) return json({ error: 'User not found' }, 404);
+
+    return json({ ok: true, user: data });
+  } catch (err) {
+    return json({ error: err.message }, 500);
+  }
+}
+
 // ─── Public Pricing Preview ───────────────────────────────────────────
 // POST /api/pricing-preview — display-only calculator, no auth required
 async function handlePricingPreview(event) {
@@ -1462,6 +1508,7 @@ exports.handler = async (event) => {
       const adminPath = (p.startsWith('/api/') ? p.replace('/api/', '') : p).split('/').filter(Boolean);
       if (adminPath[1] === 'payment-reports') return handleAdminPaymentReports(event);
       if (adminPath[1] === 'platform-config') return handleAdminPlatformConfig(event);
+      if (adminPath[1] === 'user-status') return handleAdminUserStatus(event);
       return json({ error: 'Not found' }, 404);
     case 'pricing-preview':
       return handlePricingPreview(event);

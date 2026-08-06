@@ -435,7 +435,9 @@ GRANT EXECUTE ON FUNCTION public.credit_ambassador_commission(TEXT, UUID, NUMERI
 -- Note: reject_terms_acceptance_update_delete is a trigger function.
 -- It is invoked by the trigger, not by direct call. No EXECUTE grant needed.
 
-RAISE NOTICE 'Step 3: Regranted 3 approved RPCs to service_role';
+DO $$ BEGIN
+  RAISE NOTICE 'Step 3: Regranted 3 approved RPCs to service_role';
+END $$;
 
 
 -- ================================================================

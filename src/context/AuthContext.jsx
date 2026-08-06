@@ -5,7 +5,9 @@ const AuthContext = createContext(null);
 
 // SECURITY: Only safe columns are loaded from the users table in the browser.
 // NEVER select referral_code, bls_points_balance, or other server-only fields.
-const SAFE_USER_COLUMNS = 'id, email, name, avatar, role, created_at';
+// account_status is a safe, read-only field granted to authenticated users
+// so the UI can react to a suspended/deactivated account.
+const SAFE_USER_COLUMNS = 'id, email, name, avatar, role, created_at, account_status';
 
 function load(key, fallback) {
   try {

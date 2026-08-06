@@ -125,10 +125,13 @@ test('auth.cjs does not contain misleading "bypasses RLS" comment', () => {
 
 test('createUserClient uses anon key (not service role)', () => {
   const src = read('auth.cjs');
-  // The createUserClient function should reference SUPABASE_ANON_KEY
+  // The createUserClient function should reference an anon key only
   const createUserIdx = src.indexOf('function createUserClient');
   const createUserBody = src.substring(createUserIdx, createUserIdx + 500);
-  assert.ok(createUserBody.includes('SUPABASE_ANON_KEY'), 'createUserClient must use SUPABASE_ANON_KEY');
+  assert.ok(
+    createUserBody.includes('VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY'),
+    'createUserClient must read VITE_SUPABASE_ANON_KEY (with SUPABASE_ANON_KEY fallback)'
+  );
   assert.ok(!createUserBody.includes('SUPABASE_SERVICE_ROLE_KEY'), 'createUserClient must NOT use service role key');
 });
 
@@ -482,6 +485,68 @@ test('api.cjs admin endpoint select(*) are server-side only (service role)', () 
       assert.ok(hasAuth, `${handler} must use authenticated service client`);
     }
   }
+});
+
+// ─── 15. Account suspension / deactivation ────────────────────────────
+console.log('\n15. Account suspension / deactivation:');
+
+const MIGRATIONS_DIR = path.join(__dirname, '..', 'supabase', 'migrations');
+
+test('004_account_suspension.sql exists', () => {
+  const file = path.join(MIGRATIONS_DIR, '004_account_suspension.sql');
+  assert.ok(fs.existsSync(file), '004 migration must exist');
+});
+
+test('004 migration adds account_status column (not a role value)', () => {
+  const src = fs.readFileSync(path.join(MIGRATIONS_DIR, '004_account_suspension.sql'), 'utf8');
+  assert.ok(src.includes('account_status TEXT NOT NULL DEFAULT'), 'Must add account_status column');
+  assert.ok(src.includes("'active'"), 'Default status must be active');
+  assert.ok(src.includes('account_status_audit'), 'Must create audit table');
+  assert.ok(src.includes('ENABLE ROW LEVEL SECURITY'), 'Audit table must have RLS');
+  // Roles must never become status values — only these three role values exist
+  assert.ok(!src.includes("role TEXT DEFAULT 'suspended'"), 'Must not default role to suspended');
+});
+
+test('auth.cjs checks account_status (separate from role)', () => {
+  const src = read('auth.cjs');
+  assert.ok(src.includes("account_status"), 'Must select/check account_status');
+  assert.ok(src.includes("account_status !== 'active'"), 'Must block non-active accounts');
+  assert.ok(!src.includes("role === 'suspended'"), 'Must not compare role to suspended');
+});
+
+test('auth.cjs authenticate() returns 403 for suspended account (unit stub)', async () => {
+  const { authenticate } = require(path.join(FUNC_DIR, 'auth.cjs'));
+  // authenticate() with a bad token still returns 401 first; the account_status
+  // branch is unreachable without a real Supabase session. This test guards the
+  // code path presence only (403 branch exists).
+  const src = read('auth.cjs');
+  assert.ok(src.includes("return json({ error: 'Account not active' }, 403)"), 'Must have 403 branch');
+});
+
+test('api.cjs has handleAdminUserStatus using authenticateAdmin', () => {
+  const src = read('api.cjs');
+  const idx = src.indexOf('handleAdminUserStatus');
+  assert.ok(idx > 0, 'Must define handleAdminUserStatus');
+  const body = src.substring(idx, idx + 1400);
+  assert.ok(body.includes('authenticateAdmin'), 'Must use authenticateAdmin');
+  assert.ok(!body.includes('jwtDecode('), 'Must not use jwtDecode');
+  assert.ok(body.includes("'active', 'suspended', 'deactivated'"), 'Must allow the three statuses');
+  assert.ok(body.includes('suspended_by'), 'Must record who suspended');
+});
+
+test('api.cjs routes /api/admin/user-status', () => {
+  const src = read('api.cjs');
+  assert.ok(src.includes("adminPath[1] === 'user-status'"), 'Must route user-status');
+  assert.ok(src.includes('handleAdminUserStatus(event)'), 'Must call handler');
+});
+
+test('AuthContext.jsx SAFE_USER_COLUMNS includes account_status', () => {
+  const src = readSrc('context/AuthContext.jsx');
+  const colIdx = src.indexOf('SAFE_USER_COLUMNS');
+  const colDef = src.substring(colIdx, colIdx + 200);
+  assert.ok(colDef.includes('account_status'), 'SAFE_USER_COLUMNS must include account_status');
+  assert.ok(!colDef.includes('referral_code'), 'Must still exclude referral_code');
+  assert.ok(!colDef.includes('bls_points_balance'), 'Must still exclude bls_points_balance');
 });
 
 // ─── Results ──────────────────────────────────────────────────────────
