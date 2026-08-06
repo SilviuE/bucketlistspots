@@ -14,13 +14,13 @@
     },
     {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
-      "sha256": "8657971F327CF7040BAE20C9B195F3AA1358CDBA8CA0780E8ED5E77DDF157ABC",
+      "sha256": "1CD5C19626863A7841634A4838590A3DE62658F47B2E951E731D4D7129C38CAB",
       "bytes": 45504,
       "role": "RLS privilege hardening - fresh and upgrade paths"
     },
     {
       "path": "supabase/migrations/004_account_suspension.sql",
-      "sha256": "CD14D06535A0F90B8DCFD4DA25EA42A1E6431C005200B8D04E833B1984148F29",
+      "sha256": "709CA44579917B0828AB37785F45C5D3B8F76743862703CB9A5FA97A0BE235A3",
       "bytes": 19311,
       "role": "account suspension + trigger-written audit trail"
     },
@@ -38,7 +38,7 @@
     },
     {
       "path": "supabase/test/phaseb_test_harness.sql",
-      "sha256": "CB082024128F08FB764CF7BEA5DD1788EE45A602D42FA28978687C6B88FD610F",
+      "sha256": "91E43C605EC0A3EE6F16C547EF77420D74C93421B738520A8C131F0E5EE350DB",
       "bytes": 32708,
       "role": "disposable DB test harness"
     },

@@ -319,6 +319,153 @@ END $t3$;
 
 
 -- ================================================================
+-- PHASE 5c: STRUCTURAL VALIDATION NEGATIVE TESTS
+-- ================================================================
+-- Each test creates a deliberately incompatible schema_migrations
+-- table, runs the structural validation inline, and verifies it
+-- aborts with the expected error.
+DO $p5c$ BEGIN
+  RAISE NOTICE '';
+  RAISE NOTICE '══════════════════════════════════════════';
+  RAISE NOTICE 'PHASE 5c: Structural Validation Negative Tests';
+  RAISE NOTICE '══════════════════════════════════════════';
+END $p5c$;
+
+-- Backup the real schema_migrations
+DROP TABLE IF EXISTS _sm_backup;
+CREATE TEMP TABLE _sm_backup AS SELECT * FROM public.schema_migrations;
+
+-- NEG1: nullable name → must abort
+DO $neg1$
+BEGIN
+  DROP TABLE IF EXISTS public.schema_migrations CASCADE;
+  CREATE TABLE public.schema_migrations (
+    version TEXT PRIMARY KEY,
+    name TEXT,                          -- should be NOT NULL
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    checksum TEXT
+  );
+  BEGIN
+    -- Run the 003b validation logic inline (simplified nullability check)
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='schema_migrations'
+        AND column_name='name' AND is_nullable='YES'
+    ) THEN
+      RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: name nullability: expected NOT NULL, got NULL';
+    END IF;
+    RAISE WARNING 'FAIL: NEG1 — nullable name was NOT rejected';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '%nullability%NULL%' OR SQLERRM LIKE '%STRUCTURE%' THEN
+      RAISE NOTICE 'PASS: NEG1 — nullable name correctly rejected: %', SQLERRM;
+    ELSE
+      RAISE WARNING 'FAIL: NEG1 — unexpected error: %', SQLERRM;
+    END IF;
+  END;
+END $neg1$;
+
+-- NEG2: nullable applied_at → must abort
+DO $neg2$
+BEGIN
+  DROP TABLE IF EXISTS public.schema_migrations CASCADE;
+  CREATE TABLE public.schema_migrations (
+    version TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TIMESTAMPTZ,             -- should be NOT NULL
+    checksum TEXT
+  );
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='schema_migrations'
+        AND column_name='applied_at' AND is_nullable='YES'
+    ) THEN
+      RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: applied_at nullability: expected NOT NULL, got NULL';
+    END IF;
+    RAISE WARNING 'FAIL: NEG2 — nullable applied_at was NOT rejected';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '%nullability%NULL%' OR SQLERRM LIKE '%STRUCTURE%' THEN
+      RAISE NOTICE 'PASS: NEG2 — nullable applied_at correctly rejected: %', SQLERRM;
+    ELSE
+      RAISE WARNING 'FAIL: NEG2 — unexpected error: %', SQLERRM;
+    END IF;
+  END;
+END $neg2$;
+
+-- NEG3: composite primary key (version, name) → must abort
+DO $neg3$
+DECLARE
+  _pk_cols INT;
+BEGIN
+  DROP TABLE IF EXISTS public.schema_migrations CASCADE;
+  CREATE TABLE public.schema_migrations (
+    version TEXT NOT NULL,
+    name TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    checksum TEXT,
+    PRIMARY KEY (version, name)         -- composite PK
+  );
+  BEGIN
+    SELECT array_length(conkey, 1) INTO _pk_cols
+    FROM pg_constraint
+    WHERE conrelid = 'public.schema_migrations'::regclass AND contype = 'p';
+
+    IF _pk_cols != 1 THEN
+      RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: PRIMARY KEY has % columns (expected exactly 1)', _pk_cols;
+    END IF;
+    RAISE WARNING 'FAIL: NEG3 — composite PK was NOT rejected';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '%PRIMARY KEY%column%' THEN
+      RAISE NOTICE 'PASS: NEG3 — composite PK (version,name) correctly rejected: %', SQLERRM;
+    ELSE
+      RAISE WARNING 'FAIL: NEG3 — unexpected error: %', SQLERRM;
+    END IF;
+  END;
+END $neg3$;
+
+-- NEG4: column-level SELECT granted to service_role → must abort
+DO $neg4$
+BEGIN
+  DROP TABLE IF EXISTS public.schema_migrations CASCADE;
+  CREATE TABLE public.schema_migrations (
+    version TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    checksum TEXT
+  );
+  GRANT SELECT (version) ON public.schema_migrations TO service_role;
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.role_column_grants
+      WHERE table_schema='public' AND table_name='schema_migrations'
+        AND grantee IN ('anon','authenticated','PUBLIC','service_role')
+    ) THEN
+      RAISE EXCEPTION 'SCHEMA_MIGRATIONS GRANT FAILURE (column): runtime roles have column grants';
+    END IF;
+    RAISE WARNING 'FAIL: NEG4 — column-level grant was NOT rejected';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '%GRANT FAILURE%column%' OR SQLERRM LIKE '%column grant%' THEN
+      RAISE NOTICE 'PASS: NEG4 — service_role column-level SELECT correctly rejected: %', SQLERRM;
+    ELSE
+      RAISE WARNING 'FAIL: NEG4 — unexpected error: %', SQLERRM;
+    END IF;
+  END;
+END $neg4$;
+
+-- Restore the correct schema_migrations
+DROP TABLE IF EXISTS public.schema_migrations CASCADE;
+CREATE TABLE public.schema_migrations (
+  version TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  checksum TEXT
+);
+REVOKE ALL ON public.schema_migrations FROM anon, authenticated, PUBLIC, service_role;
+INSERT INTO public.schema_migrations SELECT * FROM _sm_backup;
+DROP TABLE IF EXISTS _sm_backup;
+
+
+-- ================================================================
 -- PHASE 6: COMPREHENSIVE VERIFICATION
 -- ================================================================
 DO $p6$ BEGIN

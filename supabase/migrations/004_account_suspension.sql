@@ -41,27 +41,31 @@ REVOKE ALL ON public.schema_migrations FROM anon, authenticated, PUBLIC, service
 
 -- ================================================================
 -- Structural validation: schema_migrations must have the expected
--- columns with correct types, constraints and no runtime-role
--- grants. Abort if incompatible. (Same as 003b.)
+-- columns with exact types, nullability, single-column PK and
+-- zero runtime-role grants (table-level AND column-level).
+-- Abort on any incompatibility. (Mirrors 003b.)
 -- ================================================================
 DO $struct$
 DECLARE
   _missing TEXT[];
   _bad_grants TEXT[];
   _col RECORD;
+  _pk_cols INT;
+  _pk_count INT;
+  _version_attnum SMALLINT;
   _expected TEXT[][] := ARRAY[
-    ARRAY['version',     'text',                        'YES'],
-    ARRAY['name',        'text',                        'NO' ],
-    ARRAY['applied_at',  'timestamp with time zone',    'NO' ],
-    ARRAY['checksum',    'text',                        'YES']
+    ARRAY['version',    'text',                        'NO' ],
+    ARRAY['name',       'text',                        'NO' ],
+    ARRAY['applied_at', 'timestamp with time zone',    'NO' ],
+    ARRAY['checksum',   'text',                        'YES']
   ];
 BEGIN
   FOR i IN 1..array_length(_expected, 1) LOOP
-    SELECT column_name, data_type INTO _col
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'schema_migrations'
-      AND column_name = _expected[i][1];
+    SELECT c.column_name, c.data_type, c.is_nullable INTO _col
+    FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.table_name = 'schema_migrations'
+      AND c.column_name = _expected[i][1];
 
     IF NOT FOUND THEN
       _missing := array_append(_missing, _expected[i][1] || ' (missing)');
@@ -70,7 +74,14 @@ BEGIN
 
     IF _col.data_type != _expected[i][2] THEN
       _missing := array_append(_missing,
-        _expected[i][1] || ' (expected ' || _expected[i][2] || ', got ' || _col.data_type || ')');
+        _expected[i][1] || ' type: expected ' || _expected[i][2] || ', got ' || _col.data_type);
+    END IF;
+
+    IF _col.is_nullable != _expected[i][3] THEN
+      _missing := array_append(_missing,
+        _expected[i][1] || ' nullability: expected ' ||
+        CASE WHEN _expected[i][3] = 'NO' THEN 'NOT NULL' ELSE 'NULL' END ||
+        ', got ' || CASE WHEN _col.is_nullable = 'NO' THEN 'NOT NULL' ELSE 'NULL' END);
     END IF;
   END LOOP;
 
@@ -88,15 +99,36 @@ BEGIN
     RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: unexpected extra columns found';
   END IF;
 
+  SELECT count(*) INTO _pk_count
+  FROM pg_constraint
+  WHERE conrelid = 'public.schema_migrations'::regclass
+    AND contype = 'p';
+
+  IF _pk_count != 1 THEN
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: expected 1 PRIMARY KEY, found %', _pk_count;
+  END IF;
+
+  SELECT array_length(conkey, 1) INTO _pk_cols
+  FROM pg_constraint
+  WHERE conrelid = 'public.schema_migrations'::regclass
+    AND contype = 'p';
+
+  IF _pk_cols != 1 THEN
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: PRIMARY KEY has % columns (expected exactly 1)', _pk_cols;
+  END IF;
+
+  SELECT attnum::smallint INTO _version_attnum
+  FROM pg_attribute
+  WHERE attrelid = 'public.schema_migrations'::regclass
+    AND attname = 'version';
+
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid = 'public.schema_migrations'::regclass
       AND contype = 'p'
-      AND conkey @> (SELECT array_agg(attnum) FROM pg_attribute
-                     WHERE attrelid = 'public.schema_migrations'::regclass
-                       AND attname = 'version')
+      AND conkey = ARRAY[_version_attnum]::smallint[]
   ) THEN
-    RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: version is not the PRIMARY KEY';
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS STRUCTURE FAILURE: PRIMARY KEY column is not (version)';
   END IF;
 
   SELECT array_agg(g.grantee || ':' || g.privilege_type) INTO _bad_grants
@@ -106,11 +138,22 @@ BEGIN
     AND g.grantee IN ('anon', 'authenticated', 'PUBLIC', 'service_role');
 
   IF _bad_grants IS NOT NULL AND array_length(_bad_grants, 1) > 0 THEN
-    RAISE EXCEPTION 'SCHEMA_MIGRATIONS GRANT FAILURE: runtime roles have access: %',
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS GRANT FAILURE (table): runtime roles have access: %',
       array_to_string(_bad_grants, ', ');
   END IF;
 
-  RAISE NOTICE 'schema_migrations structure validated: 4 columns [version TEXT PK, name TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL, checksum TEXT], no runtime-role grants.';
+  SELECT array_agg(g.grantee || ':' || g.column_name || ':' || g.privilege_type) INTO _bad_grants
+  FROM information_schema.role_column_grants g
+  WHERE g.table_schema = 'public'
+    AND g.table_name = 'schema_migrations'
+    AND g.grantee IN ('anon', 'authenticated', 'PUBLIC', 'service_role');
+
+  IF _bad_grants IS NOT NULL AND array_length(_bad_grants, 1) > 0 THEN
+    RAISE EXCEPTION 'SCHEMA_MIGRATIONS GRANT FAILURE (column): runtime roles have column grants: %',
+      array_to_string(_bad_grants, ', ');
+  END IF;
+
+  RAISE NOTICE 'schema_migrations structure validated: 4 columns [version TEXT NOT NULL PK, name TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL, checksum TEXT], exact PK=(version), zero table/column grants for runtime roles.';
 END $struct$;
 
 DO $guard$
