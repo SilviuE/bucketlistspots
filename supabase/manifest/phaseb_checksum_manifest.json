@@ -1,10 +1,11 @@
 ﻿{
-  "commit": "fb29f23a4310dc68bf76bd8b1e07b4b1a2559369",
+  "commit": "41dcbd6eb548f0eec3b53a382fc2bcc7e38fa0c3",
   "branch": "review/terms-sections-6-7",
-  "generated_at": "2026-08-06T20:57:00+01:00",
-  "generated_by": "Get-FileHash -Algorithm SHA256",
+  "generated_at": "2026-08-06T22:55:00+01:00",
+  "generated_by": "verify_checksums.ps1 normalisation (CRLF->LF before SHA-256)",
   "verification_script": "supabase/manifest/verify_checksums.ps1",
-  "note": "This manifest records the full-file SHA-256 of every migration, seed, preflight, test, doc, runbook and evidence file in the authorised staging chain. It does NOT include the manifest JSON or verify_checksums.ps1 (tooling, self-referential). The embedded checksum constants inside migration files are database migration-history guards and are NOT independent file-verification hashes. Use verify_checksums.ps1 for file-integrity verification.",
+  "canonical_method": "All SHA-256 values are computed on LF-normalised file content (\\r\\n replaced with \\n). This makes verification independent of core.autocrlf and platform line-ending conversion. The committed .gitattributes ensures checkout uses LF for *.sql, *.ps1, *.json, *.md, *.txt.",
+  "note": "This manifest records the full-file SHA-256 (LF-normalised) of every migration, seed, preflight, test, doc, runbook and evidence file in the authorised staging chain. It does NOT include the manifest JSON or verify_checksums.ps1 (tooling, self-referential). The embedded checksum constants inside migration files are database migration-history guards and are NOT independent file-verification hashes.",
   "files": [
     {
       "path": "supabase/migrations/0000_core_schema.sql",
@@ -14,14 +15,14 @@
     },
     {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
-      "sha256": "1CD5C19626863A7841634A4838590A3DE62658F47B2E951E731D4D7129C38CAB",
-      "bytes": 45504,
+      "sha256": "2D90B3F2B57306E1B893D1DB65A078618944DB8912C9A8448FC9C37FEBEC1F7F",
+      "bytes": 47756,
       "role": "RLS privilege hardening - fresh and upgrade paths"
     },
     {
       "path": "supabase/migrations/004_account_suspension.sql",
-      "sha256": "709CA44579917B0828AB37785F45C5D3B8F76743862703CB9A5FA97A0BE235A3",
-      "bytes": 19311,
+      "sha256": "9EDA2696E3FE13E413CE8728A7F4530B1E212AC9B0E200E746B6EF27888906AD",
+      "bytes": 22066,
       "role": "account suspension + trigger-written audit trail"
     },
     {
@@ -39,7 +40,7 @@
     {
       "path": "supabase/test/phaseb_test_harness.sql",
       "sha256": "91E43C605EC0A3EE6F16C547EF77420D74C93421B738520A8C131F0E5EE350DB",
-      "bytes": 32708,
+      "bytes": 38297,
       "role": "disposable DB test harness"
     },
     {
@@ -62,8 +63,8 @@
     },
     {
       "path": "supabase/evidence/phaseb_execution_transcript.txt",
-      "sha256": "C1F9E47D3FC493BB61E6E2C95532BEEE79D21F8E2C99F42B16F852A5A9912F6B",
-      "bytes": 3863,
+      "sha256": "51A04F65975344352A4A97DA9BAC3346FBDA74789EFE4EE6884504FF132D77CF",
+      "bytes": 3862,
       "role": "redacted disposable DB execution transcript"
     }
   ]
