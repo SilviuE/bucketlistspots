@@ -17,7 +17,8 @@
 | Staging trigger branch | `review/*` (or `dev`), NOT `main` |
 | Production branch | `main` — must keep production env vars |
 | Stripe mode | TEST mode only (`sk_test_…`, `whsec_…` test secret) |
-| Supabase migration on staging | full scenario: `001…003b` from `supabase/migrations/` + dry-run scenarios |
+| Supabase migration on staging | full scenario: `001…003b` + `004` from `supabase/migrations/` + dry-run scenarios |
+| Cloud access method | **Dashboard-only** — owner performs Supabase/Netlify steps in the dashboards; no CLI credentials stored on this machine. Local prep uses the pinned repo dev dependency via `npm run supabase` (no login). |
 
 ## 1. Create staging Supabase project (owner, dashboard)
 
