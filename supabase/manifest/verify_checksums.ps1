@@ -55,6 +55,37 @@ foreach ($f in $manifest.files) {
   $expected[$f.path.ToLowerInvariant()] = $f
 }
 
+# Known legacy files. These are superseded by 0000_core_schema.sql and
+# remain in the repo for reference. They are NOT part of the Phase B
+# staging chain. Any file in the protected directories that is NOT in
+# the manifest AND NOT in this allowlist causes a non-zero exit.
+$allowlist = @(
+  "supabase/migrations/001_landing_page_infrastructure.sql",
+  "supabase/migrations/002_webhook_infrastructure.sql",
+  "supabase/migrations/002_webhook_infrastructure_upgrade.sql",
+  "supabase/migrations/002a_terms_acceptance_upgrade.sql",
+  "supabase/migrations/003_backfill_experiences_destinations.sql",
+  "supabase/migrations/003a_publication_columns.sql",
+  "supabase/migrations/003b_emergency_recovery.sql",
+  "supabase/migrations/ambassador_commission.sql",
+  "supabase/migrations/charity_challenges.sql",
+  "supabase/migrations/claims_registry.sql",
+  "supabase/migrations/create_posts.sql",
+  "supabase/migrations/payment_reports.sql",
+  "supabase/migrations/platform_config.sql",
+  "supabase/migrations/platform_config_expansion.sql",
+  "supabase/migrations/posts_public_select.sql",
+  "supabase/migrations/referral_program.sql",
+  "supabase/migrations/terms_acceptance.sql",
+  "supabase/migrations/terms_acceptance_upgrade.sql",
+  "supabase/migrations/testimonials.sql"
+)
+
+$allowlistLookup = @{}
+foreach ($a in $allowlist) {
+  $allowlistLookup[$a.ToLowerInvariant()] = $true
+}
+
 $scanDirs = @("supabase\migrations", "supabase\seed", "supabase\preflight", "supabase\test", "supabase\docs", "supabase\runbooks", "supabase\evidence")
 # Note: supabase/manifest is NOT scanned. The manifest JSON and this
 # script are tooling, not content. They cannot self-verify because
@@ -72,19 +103,32 @@ foreach ($dir in $scanDirs) {
 }
 
 $unexpected = @()
+$allowed_legacy = @()
 foreach ($af in $actualFiles.Keys) {
   if (-not $expected.ContainsKey($af)) {
-    $unexpected += $actualFiles[$af]
+    if ($allowlistLookup.ContainsKey($af)) {
+      $allowed_legacy += $actualFiles[$af]
+    } else {
+      $unexpected += $actualFiles[$af]
+    }
   }
 }
 
-if ($unexpected.Count -gt 0) {
-  Write-Host "EXTRA FILES (present on disk, not in manifest - see notes):" -ForegroundColor Yellow
-  foreach ($uf in ($unexpected | Sort-Object)) {
-    Write-Host "  + $uf" -ForegroundColor Yellow
+if ($allowed_legacy.Count -gt 0) {
+  Write-Host "LEGACY FILES (in allowlist, not in manifest):" -ForegroundColor DarkGray
+  foreach ($lf in ($allowed_legacy | Sort-Object)) {
+    Write-Host "  ~ $lf" -ForegroundColor DarkGray
   }
   Write-Host ""
-  # Extra files do not fail verification; they are superseded/legacy.
+}
+
+if ($unexpected.Count -gt 0) {
+  Write-Host "UNEXPECTED FILES (not in manifest or allowlist):" -ForegroundColor Red
+  foreach ($uf in ($unexpected | Sort-Object)) {
+    Write-Host "  ! $uf" -ForegroundColor Red
+  }
+  Write-Host ""
+  $exitCode = 3
 }
 
 $missing = @()

@@ -14,13 +14,13 @@
     },
     {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
-      "sha256": "F4AEB48319BFE1A53169AE7FF8D979FE669CDFEAD9BBC4BE7B97321B2C41E69C",
+      "sha256": "8657971F327CF7040BAE20C9B195F3AA1358CDBA8CA0780E8ED5E77DDF157ABC",
       "bytes": 45504,
       "role": "RLS privilege hardening - fresh and upgrade paths"
     },
     {
       "path": "supabase/migrations/004_account_suspension.sql",
-      "sha256": "FE20932F0D450E3AB09B91DD6D73B019FEB1712907864601B4A7D47BE94C72C6",
+      "sha256": "CD14D06535A0F90B8DCFD4DA25EA42A1E6431C005200B8D04E833B1984148F29",
       "bytes": 19311,
       "role": "account suspension + trigger-written audit trail"
     },
