@@ -55,7 +55,7 @@ foreach ($f in $manifest.files) {
   $expected[$f.path.ToLowerInvariant()] = $f
 }
 
-$scanDirs = @("supabase\migrations", "supabase\seed", "supabase\preflight", "supabase\test", "supabase\docs", "supabase\runbooks", "supabase\manifest")
+$scanDirs = @("supabase\migrations", "supabase\seed", "supabase\preflight", "supabase\test", "supabase\docs", "supabase\runbooks", "supabase\evidence")
 $actualFiles = @{}
 foreach ($dir in $scanDirs) {
   $dirFull = Join-Path $RepoRoot $dir
