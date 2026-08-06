@@ -567,9 +567,9 @@ BEGIN
   ELSE RAISE NOTICE '  anon: CANNOT select public.users'; END IF;
 
   -- anon: CAN select public.guides (column-restricted)
-  IF EXISTS (SELECT 1 FROM information_schema.role_table_grants
+  IF EXISTS (SELECT 1 FROM information_schema.role_column_grants
              WHERE grantee='anon' AND table_name='guides' AND table_schema='public'
-             AND privilege_type='SELECT') THEN
+             AND privilege_type='SELECT' AND column_name='name') THEN
     RAISE NOTICE '  anon: CAN select public.guides (column-restricted)';
   ELSE RAISE WARNING 'anon CANNOT select public.guides'; v_errors := v_errors + 1; END IF;
 
@@ -599,9 +599,9 @@ BEGIN
   ELSE RAISE NOTICE '  anon: CANNOT select public.claims_registry'; END IF;
 
   -- authenticated: CAN select public.guides (column-restricted)
-  IF EXISTS (SELECT 1 FROM information_schema.role_table_grants
+  IF EXISTS (SELECT 1 FROM information_schema.role_column_grants
              WHERE grantee='authenticated' AND table_name='guides' AND table_schema='public'
-             AND privilege_type='SELECT') THEN
+             AND privilege_type='SELECT' AND column_name='name') THEN
     RAISE NOTICE '  authenticated: CAN select public.guides (column-restricted)';
   ELSE RAISE WARNING 'authenticated CANNOT select public.guides'; v_errors := v_errors + 1; END IF;
 
@@ -669,10 +669,10 @@ BEGIN
   FOR r IN
     SELECT rolname AS owner, d.defaclacl::text AS acl
     FROM pg_default_acl d
-    JOIN pg_roles r ON d.defaclrole = r.oid
+    JOIN pg_roles rol ON d.defaclrole = rol.oid
     WHERE d.defaclobjtype = 'f'
       AND d.defaclnamespace = 'public'::regnamespace
-      AND r.rolname IN ('postgres','supabase_admin')
+      AND rol.rolname IN ('postgres','supabase_admin')
   LOOP
     IF r.owner = 'postgres' THEN
       IF r.acl LIKE '%anon=%' OR r.acl LIKE '%authenticated=%' OR r.acl LIKE '%service_role=%' THEN
@@ -694,8 +694,8 @@ BEGIN
   -- Function ownership: all public functions must be owned by postgres
   SELECT count(*) INTO v_count FROM pg_proc p
     JOIN pg_namespace n ON p.pronamespace = n.oid
-    JOIN pg_roles r ON p.proowner = r.oid
-    WHERE n.nspname = 'public' AND p.prokind = 'f' AND r.rolname != 'postgres';
+    JOIN pg_roles rol ON p.proowner = rol.oid
+    WHERE n.nspname = 'public' AND p.prokind = 'f' AND rol.rolname != 'postgres';
   IF v_count > 0 THEN
     RAISE WARNING 'Function ownership: % public functions not owned by postgres', v_count;
     v_errors := v_errors + 1;
