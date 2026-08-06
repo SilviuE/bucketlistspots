@@ -41,7 +41,13 @@
       "path": "supabase/test/phaseb_test_harness.sql",
       "sha256": "57B3F13206AD85F396A5D686FD11E83434FB90047A8333B8A098EBD1565144B8",
       "bytes": 38297,
-      "role": "disposable DB test harness"
+      "role": "disposable DB test harness (local psql only)"
+    },
+    {
+      "path": "supabase/test/staging_verification.sql",
+      "sha256": "64F3CCB3CB638C46BCB88B8D668D783DBB8F276FBF34A03C9DE0996DEBFC770C",
+      "bytes": 18352,
+      "role": "staging-safe post-install verification (Supabase SQL Editor)"
     },
     {
       "path": "supabase/docs/checksum_explanation.md",
