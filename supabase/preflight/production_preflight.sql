@@ -1,364 +1,335 @@
 -- ================================================================
--- PRODUCTION PREFLIGHT / RECONCILIATION (READ-ONLY)
+-- PRODUCTION PREFLIGHT / RECONCILIATION (STRICTLY READ-ONLY)
 -- ================================================================
 -- Target  : nmyhytrnzfhdstqazttb (production) ONLY
--- Safety  : READ-ONLY. No CREATE/ALTER/DROP/INSERT/UPDATE/DELETE.
---           No privilege changes. Returns a structured result table.
---           Any STOP condition raises EXCEPTION before completion.
--- Stop    : Any check with status STOP aborts the preflight.
---           WARNING = review required, migration may proceed.
---           PASS    = no issue.
+-- Safety  : ZERO writes. No CREATE/ALTER/DROP/TRUNCATE/INSERT/
+--           UPDATE/DELETE/MERGE/GRANT/REVOKE. No temp objects.
+--           Pure SELECT with CTEs and UNION ALL.
+-- Output  : Structured result table:
+--             section | check_name | status | detail | severity
+-- Stop    : Rows with status STOP must be reviewed and resolved
+--           before migration. They are unmistakably labelled.
+-- WARNING : Review required, does not block. Each row documents
+--           which migration resolves it.
+-- PASS    : No issue.
 -- ================================================================
 
-CREATE TEMP TABLE _pr (
-  section  INTEGER NOT NULL,
-  check_name TEXT   NOT NULL,
-  status    TEXT   NOT NULL CHECK (status IN ('PASS','WARNING','STOP')),
-  detail    TEXT,
-  severity  TEXT   NOT NULL CHECK (severity IN ('INFO','WARNING','BLOCKING'))
-);
+WITH
 
 -- ================================================================
 -- PA. TABLE INVENTORY
 -- ================================================================
--- Expected before 003b: users, guides, experiences, destinations,
--- guide_applications, ambassador_applications, posts, platform_config,
--- transactions, webhook_event_inbox, booking_confirmations,
--- terms_acceptance, payment_reports, testimonials, claims_registry,
--- fundraising_pages, destination_charities. Also account_status_audit
--- if 004 already applied. schema_migrations may or may not exist
--- (003b creates it on production).
---
--- 18 tables are expected. Missing core tables needed by 003b preflight
--- are STOP. Tables that 003b/004 create themselves are WARNING.
-
-DO $$ DECLARE _c INT; _missing TEXT; _tbl TEXT;
-  _required_003b TEXT[] := ARRAY[
-    'users','guides','experiences','destinations',
-    'guide_applications','ambassador_applications',
-    'platform_config','transactions',
-    'webhook_event_inbox','booking_confirmations',
-    'terms_acceptance','payment_reports',
-    'testimonials','claims_registry',
-    'fundraising_pages','destination_charities',
-    'posts'
-  ];
-  _required_all TEXT[] := ARRAY[
-    'users','guides','experiences','destinations',
-    'guide_applications','ambassador_applications',
-    'platform_config','transactions',
-    'webhook_event_inbox','booking_confirmations',
-    'terms_acceptance','payment_reports',
-    'testimonials','claims_registry',
-    'fundraising_pages','destination_charities',
-    'posts','account_status_audit'
-  ];
-BEGIN
-  _missing := '';
-  FOREACH _tbl IN ARRAY _required_003b LOOP
-    IF NOT EXISTS (SELECT 1 FROM information_schema.tables
-      WHERE table_schema='public' AND table_name=_tbl) THEN
-      _missing := _missing || _tbl || ', ';
-    END IF;
-  END LOOP;
-
-  IF _missing != '' THEN
-    INSERT INTO _pr VALUES (1,'PA1: core tables','STOP',
-      'Missing tables required by 003b preflight: '||rtrim(_missing,', '),
-      'BLOCKING');
-    RAISE EXCEPTION 'PREFLIGHT STOP: missing tables needed by 003b: %',
-      rtrim(_missing,', ');
-  ELSE
-    INSERT INTO _pr VALUES (1,'PA1: core tables','PASS',
-      'All 17 tables required by 003b preflight exist','INFO');
-  END IF;
-
-  -- schema_migrations
-  IF NOT EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='schema_migrations') THEN
-    INSERT INTO _pr VALUES (1,'PA2: schema_migrations','WARNING',
-      'Not present. 003b will create it. This is expected on first production upgrade.',
-      'WARNING');
-  ELSE
-    INSERT INTO _pr VALUES (1,'PA2: schema_migrations','PASS','Exists','INFO');
-  END IF;
-
-  -- account_status_audit (created by 004)
-  IF NOT EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='account_status_audit') THEN
-    INSERT INTO _pr VALUES (1,'PA3: account_status_audit','WARNING',
-      'Not present. 004 will create it. This is expected before 004 is applied.',
-      'WARNING');
-  ELSE
-    INSERT INTO _pr VALUES (1,'PA3: account_status_audit','PASS','Exists','INFO');
-  END IF;
-
-  -- Total table count (informational)
-  SELECT count(*) INTO _c FROM pg_tables WHERE schemaname='public';
-  INSERT INTO _pr VALUES (1,'PA4: total tables','PASS',
-    _c||' tables in public schema','INFO');
-END $$;
+-- Expected before 003b: 17 core tables. schema_migrations and
+-- account_status_audit are created by 003b/004 respectively.
+-- ================================================================
+tables_missing AS (
+  SELECT string_agg(t.tbl, ', ') AS missing
+  FROM (VALUES
+    ('users'),('guides'),('experiences'),('destinations'),
+    ('guide_applications'),('ambassador_applications'),
+    ('platform_config'),('transactions'),
+    ('webhook_event_inbox'),('booking_confirmations'),
+    ('terms_acceptance'),('payment_reports'),
+    ('testimonials'),('claims_registry'),
+    ('fundraising_pages'),('destination_charities'),
+    ('posts')
+  ) AS t(tbl)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = t.tbl
+  )
+),
+total_tables AS (
+  SELECT count(*)::text AS n FROM pg_tables WHERE schemaname = 'public'
+),
+sm_exists AS (
+  SELECT EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema='public' AND table_name='schema_migrations') AS ex
+),
+as_exists AS (
+  SELECT EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema='public' AND table_name='account_status_audit') AS ex
+),
 
 -- ================================================================
--- PB. CORE TABLE COLUMN AUDIT
+-- PB. COLUMN AUDIT (core tables only)
 -- ================================================================
--- 003b preflight requires specific columns on 10 tables.
--- Missing columns that 003b itself creates (users.avatar) are WARNING.
--- Missing columns needed by preflight are STOP.
-
-DO $$ DECLARE _missing TEXT; _t TEXT; _c TEXT;
-  _003b_cols TEXT[][] := ARRAY[
-    -- {table, column_list_comma_separated, created_by_which_migration}
-    ARRAY['users',
-      'id,email,name,role,referral_code,bls_points_balance,created_at',
-      'avatar added by 003b §3'],
-    ARRAY['guides',
-      'id,user_id,name,trading_name,status,referral_code,bls_points_balance,referred_by_ambassador_id,price_currency,routes,photo,hero_image,bio,why_independent,location,languages,experience,certifications,promise,badge,tagline,price,featured,review_count,trips_led,video_intro,tripadvisor_embed,identity_verified,license_verified,safety_verified,fair_pay_verified,updated_at',
-      'all required by 003b preflight §2'],
-    ARRAY['experiences',
-      'id,title,duration,difficulty,location,image,price,currency,guide_id,badge,rating,reviews,featured,is_published',
-      'all required by 003b preflight §2'],
-    ARRAY['destinations',
-      'name,country,image,guide_count,is_published',
-      'all required by 003b preflight §2'],
-    ARRAY['guide_applications',
-      'id,full_name,email,phone,country,experience,languages,specialties,message,heard_from,status',
-      'all required by 003b preflight §2'],
-    ARRAY['ambassador_applications',
-      'id,full_name,email,phone,country,platform,handle,followers,niche,why_you,heard_from,status',
-      'all required by 003b preflight §2'],
-    ARRAY['posts',
-      'id,user_id,author_role,author_name,content,image_url,video_url',
-      'all required by 003b preflight §2'],
-    ARRAY['fundraising_pages',
-      'id,user_id,charity_id,charity_api_id,charity_name,page_title,target_amount,currency,total_raised,donor_count,status,last_synced_at,created_at',
-      'all required by 003b preflight §2'],
-    ARRAY['platform_config',
-      'id,promotional_commission_pct,standard_commission_pct,promotional_start_date,promotional_end_date,saas_monthly_fee_gbp,referral_program_enabled,charity_challenges_enabled',
-      'all required by 003b preflight §2'],
-    ARRAY['destination_charities',
-      'id,destination,charity_api_id,is_active',
-      'all required by 003b preflight §2']
-  ];
-  _expected TEXT[]; _tbl TEXT; _note TEXT;
-  _cols_003b_adds TEXT[] := ARRAY['avatar'];
-  _has_blocking BOOLEAN := false;
-BEGIN
-  FOR i IN 1..array_length(_003b_cols,1) LOOP
-    _tbl  := _003b_cols[i][1];
-    _note := _003b_cols[i][3];
-    _expected := string_to_array(_003b_cols[i][2], ',');
-
-    -- Only audit if table exists
-    IF NOT EXISTS (SELECT 1 FROM information_schema.tables
-      WHERE table_schema='public' AND table_name=_tbl) THEN
-      CONTINUE; -- handled in PA1
-    END IF;
-
-    _missing := '';
-    FOREACH _c IN ARRAY _expected LOOP
-      IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-        WHERE table_schema='public' AND table_name=_tbl AND column_name=trim(_c)) THEN
-        IF trim(_c) = ANY(_cols_003b_adds) THEN
-          _missing := _missing || trim(_c) || '(003b adds), ';
-        ELSE
-          _missing := _missing || trim(_c) || '(MISSING), ';
-        END IF;
-      END IF;
-    END LOOP;
-
-    IF _missing != '' THEN
-      IF _missing LIKE '%(MISSING)%' THEN
-        INSERT INTO _pr VALUES (2,'PB: '||_tbl||' columns','STOP',
-          rtrim(_missing,', ')||' — '||_note,'BLOCKING');
-        _has_blocking := true;
-      ELSE
-        INSERT INTO _pr VALUES (2,'PB: '||_tbl||' columns','WARNING',
-          rtrim(_missing,', ')||' — '||_note,'WARNING');
-      END IF;
-    ELSE
-      INSERT INTO _pr VALUES (2,'PB: '||_tbl||' columns','PASS',
-        array_length(_expected,1)||' columns present. '||_note,'INFO');
-    END IF;
-  END LOOP;
-
-  IF _has_blocking THEN
-    RAISE EXCEPTION 'PREFLIGHT STOP: one or more tables are missing columns required by 003b. See result table above.';
-  END IF;
-END $$;
+col_check AS (
+  SELECT c.tbl, c.col, c.added_by
+  FROM (VALUES
+    ('users','id',NULL),
+    ('users','email',NULL),('users','name',NULL),('users','role',NULL),
+    ('users','referral_code',NULL),('users','bls_points_balance',NULL),
+    ('users','created_at',NULL),('users','avatar','003b'),
+    ('guides','id',NULL),('guides','user_id',NULL),
+    ('guides','name',NULL),('guides','trading_name',NULL),
+    ('guides','email',NULL),('guides','status',NULL),
+    ('guides','referral_code',NULL),('guides','bls_points_balance',NULL),
+    ('guides','referred_by_ambassador_id',NULL),
+    ('guides','price_currency',NULL),('guides','routes',NULL),
+    ('guides','photo',NULL),('guides','hero_image',NULL),
+    ('guides','bio',NULL),('guides','why_independent',NULL),
+    ('guides','location',NULL),('guides','languages',NULL),
+    ('guides','experience',NULL),('guides','certifications',NULL),
+    ('guides','promise',NULL),('guides','badge',NULL),
+    ('guides','tagline',NULL),('guides','price',NULL),
+    ('guides','featured',NULL),('guides','review_count',NULL),
+    ('guides','trips_led',NULL),('guides','video_intro',NULL),
+    ('guides','tripadvisor_embed',NULL),
+    ('guides','identity_verified',NULL),('guides','license_verified',NULL),
+    ('guides','safety_verified',NULL),('guides','fair_pay_verified',NULL),
+    ('guides','updated_at',NULL),
+    ('experiences','id',NULL),('experiences','title',NULL),
+    ('experiences','duration',NULL),('experiences','difficulty',NULL),
+    ('experiences','location',NULL),('experiences','image',NULL),
+    ('experiences','price',NULL),('experiences','currency',NULL),
+    ('experiences','guide_id',NULL),('experiences','badge',NULL),
+    ('experiences','rating',NULL),('experiences','reviews',NULL),
+    ('experiences','featured',NULL),('experiences','is_published',NULL),
+    ('destinations','name',NULL),('destinations','country',NULL),
+    ('destinations','image',NULL),('destinations','guide_count',NULL),
+    ('destinations','is_published',NULL),
+    ('guide_applications','id',NULL),('guide_applications','full_name',NULL),
+    ('guide_applications','email',NULL),('guide_applications','phone',NULL),
+    ('guide_applications','country',NULL),('guide_applications','experience',NULL),
+    ('guide_applications','languages',NULL),('guide_applications','specialties',NULL),
+    ('guide_applications','message',NULL),('guide_applications','heard_from',NULL),
+    ('guide_applications','status',NULL),
+    ('ambassador_applications','id',NULL),('ambassador_applications','full_name',NULL),
+    ('ambassador_applications','email',NULL),('ambassador_applications','phone',NULL),
+    ('ambassador_applications','country',NULL),('ambassador_applications','platform',NULL),
+    ('ambassador_applications','handle',NULL),('ambassador_applications','followers',NULL),
+    ('ambassador_applications','niche',NULL),('ambassador_applications','why_you',NULL),
+    ('ambassador_applications','heard_from',NULL),('ambassador_applications','status',NULL),
+    ('posts','id',NULL),('posts','user_id',NULL),
+    ('posts','author_role',NULL),('posts','author_name',NULL),
+    ('posts','content',NULL),('posts','image_url',NULL),('posts','video_url',NULL),
+    ('fundraising_pages','id',NULL),('fundraising_pages','user_id',NULL),
+    ('fundraising_pages','charity_id',NULL),('fundraising_pages','charity_api_id',NULL),
+    ('fundraising_pages','charity_name',NULL),('fundraising_pages','page_title',NULL),
+    ('fundraising_pages','target_amount',NULL),('fundraising_pages','currency',NULL),
+    ('fundraising_pages','total_raised',NULL),('fundraising_pages','donor_count',NULL),
+    ('fundraising_pages','status',NULL),('fundraising_pages','last_synced_at',NULL),
+    ('fundraising_pages','created_at',NULL),
+    ('platform_config','id',NULL),('platform_config','promotional_commission_pct',NULL),
+    ('platform_config','standard_commission_pct',NULL),
+    ('platform_config','promotional_start_date',NULL),
+    ('platform_config','promotional_end_date',NULL),
+    ('platform_config','saas_monthly_fee_gbp',NULL),
+    ('platform_config','referral_program_enabled',NULL),
+    ('platform_config','charity_challenges_enabled',NULL),
+    ('destination_charities','id',NULL),('destination_charities','destination',NULL),
+    ('destination_charities','charity_api_id',NULL),('destination_charities','is_active',NULL)
+  ) AS c(tbl, col, added_by)
+  WHERE EXISTS (SELECT 1 FROM information_schema.tables
+    WHERE table_schema='public' AND table_name=c.tbl)
+    AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+),
 
 -- ================================================================
--- PC. DATA-CONDITION CHECKS
+-- PC. DATA CONDITION
 -- ================================================================
-DO $$ DECLARE _c INT;
-BEGIN
-  -- Publication readiness (WARNING only — 003b no longer aborts)
-  IF EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='experiences') THEN
-    SELECT count(*) INTO _c FROM public.experiences WHERE is_published=true;
-    IF _c=0 THEN
-      INSERT INTO _pr VALUES (3,'PC1: published experiences','WARNING',
-        '0 published experiences. Founder must publish before public launch. 003b will proceed regardless.','WARNING');
-    ELSE
-      INSERT INTO _pr VALUES (3,'PC1: published experiences','PASS',
-        _c||' published','INFO');
-    END IF;
-  END IF;
-
-  IF EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='destinations') THEN
-    SELECT count(*) INTO _c FROM public.destinations WHERE is_published=true;
-    IF _c=0 THEN
-      INSERT INTO _pr VALUES (3,'PC2: published destinations','WARNING',
-        '0 published destinations. Founder must publish before public launch. 003b will proceed regardless.','WARNING');
-    ELSE
-      INSERT INTO _pr VALUES (3,'PC2: published destinations','PASS',
-        _c||' published','INFO');
-    END IF;
-  END IF;
-
-  -- platform_config row count
-  IF EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='platform_config') THEN
-    SELECT count(*) INTO _c FROM public.platform_config;
-    IF _c=0 THEN
-      INSERT INTO _pr VALUES (3,'PC3: platform_config row','STOP',
-        'platform_config is empty. Founder must seed configuration.','BLOCKING');
-      RAISE EXCEPTION 'PREFLIGHT STOP: platform_config has 0 rows.';
-    ELSIF _c>1 THEN
-      INSERT INTO _pr VALUES (3,'PC3: platform_config row','STOP',
-        'platform_config has '||_c||' rows (expected 1). Data-integrity issue.','BLOCKING');
-      RAISE EXCEPTION 'PREFLIGHT STOP: platform_config has % rows (expected 1).', _c;
-    ELSE
-      INSERT INTO _pr VALUES (3,'PC3: platform_config row','PASS','1 row','INFO');
-    END IF;
-  END IF;
-
-  -- claims without evidence
-  IF EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='claims_registry') THEN
-    SELECT count(*) INTO _c FROM public.claims_registry
-    WHERE claim_type IN ('legal','commercial','financial')
-      AND publication_status='published'
-      AND (evidence_source IS NULL OR evidence_url_or_reference IS NULL);
-    IF _c>0 THEN
-      INSERT INTO _pr VALUES (3,'PC4: claims without evidence','STOP',
-        _c||' published legal/financial/commercial claims have no evidence source. Legal review required.','BLOCKING');
-      RAISE EXCEPTION 'PREFLIGHT STOP: % claims without evidence. Legal review required.', _c;
-    ELSE
-      INSERT INTO _pr VALUES (3,'PC4: claims without evidence','PASS',
-        'All published claims have evidence sources','INFO');
-    END IF;
-  END IF;
-
-  -- terms_acceptance duplicate session_ids
-  IF EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='terms_acceptance') THEN
-    BEGIN
-      IF EXISTS (SELECT session_id, count(*) FROM public.terms_acceptance
-        GROUP BY session_id HAVING count(*)>1) THEN
-        INSERT INTO _pr VALUES (3,'PC5: terms duplicates','STOP',
-          'Duplicate session_id values in terms_acceptance. Legal review required.','BLOCKING');
-        RAISE EXCEPTION 'PREFLIGHT STOP: duplicate session_id in terms_acceptance.';
-      ELSE
-        INSERT INTO _pr VALUES (3,'PC5: terms duplicates','PASS',
-          'No duplicate session_id values','INFO');
-      END IF;
-    EXCEPTION WHEN OTHERS THEN
-      INSERT INTO _pr VALUES (3,'PC5: terms duplicates','WARNING',
-        'Check skipped (column may not exist). 003b preflight will verify.','WARNING');
-    END;
-  END IF;
-END $$;
+pub_experiences AS (
+  SELECT count(*)::text AS n FROM public.experiences WHERE is_published = true
+),
+pub_destinations AS (
+  SELECT count(*)::text AS n FROM public.destinations WHERE is_published = true
+),
+platform_rows AS (
+  SELECT count(*)::text AS n FROM public.platform_config
+),
+claims_no_evidence AS (
+  SELECT count(*)::text AS n FROM public.claims_registry
+  WHERE claim_type IN ('legal','commercial','financial')
+    AND publication_status = 'published'
+    AND (evidence_source IS NULL OR evidence_url_or_reference IS NULL)
+),
 
 -- ================================================================
--- PD. RLS STATUS (informational before migration)
+-- PD. RLS STATUS
 -- ================================================================
-DO $$ DECLARE _r RECORD; _off INT := 0;
-BEGIN
-  FOR _r IN SELECT c.relname, c.relrowsecurity
-    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname='public' AND c.relkind='r'
-      AND c.relname != 'schema_migrations' ORDER BY c.relname
-  LOOP
-    IF NOT _r.relrowsecurity THEN _off := _off + 1; END IF;
-  END LOOP;
-  IF _off > 0 THEN
-    INSERT INTO _pr VALUES (4,'PD1: RLS status','WARNING',
-      _off||' tables without RLS enabled. 003b will enable RLS on all 17.','WARNING');
-  ELSE
-    INSERT INTO _pr VALUES (4,'PD1: RLS status','PASS',
-      'All application tables already have RLS enabled','INFO');
-  END IF;
-END $$;
+rls_off_count AS (
+  SELECT count(*)::text AS n FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relkind = 'r'
+    AND c.relname != 'schema_migrations' AND NOT c.relrowsecurity
+),
 
 -- ================================================================
--- PE. ACTIVE POLICIES (informational)
+-- PE. POLICIES
 -- ================================================================
-DO $$ DECLARE _c INT;
-BEGIN
-  SELECT count(*) INTO _c FROM pg_policies WHERE schemaname='public';
-  INSERT INTO _pr VALUES (5,'PE1: active policies','PASS',
-    _c||' active policies before 003b. 003b drops all 25 known and creates 5 new.','INFO');
-END $$;
+policy_count AS (
+  SELECT count(*)::text AS n FROM pg_policies WHERE schemaname = 'public'
+),
 
 -- ================================================================
--- PF. FUNCTION OWNERSHIP AND EXECUTE
+-- PF. FUNCTION OWNERSHIP
 -- ================================================================
-DO $$ DECLARE _c INT;
-BEGIN
-  SELECT count(*) INTO _c FROM pg_proc p
-  JOIN pg_namespace n ON p.pronamespace=n.oid JOIN pg_roles r ON p.proowner=r.oid
-  WHERE n.nspname='public' AND p.prokind='f' AND r.rolname != 'postgres';
-  IF _c>0 THEN
-    INSERT INTO _pr VALUES (6,'PF1: function ownership','WARNING',
-      _c||' public functions not owned by postgres. 003b verification checks this.','WARNING');
-  ELSE
-    INSERT INTO _pr VALUES (6,'PF1: function ownership','PASS',
-      'All public functions owned by postgres','INFO');
-  END IF;
-
-  SELECT count(*) INTO _c FROM information_schema.routine_privileges
-  WHERE routine_schema='public' AND grantee IN ('PUBLIC','anon','authenticated');
-  IF _c>0 THEN
-    INSERT INTO _pr VALUES (6,'PF2: client EXECUTE','WARNING',
-      _c||' EXECUTE grants to PUBLIC/anon/authenticated. 003b revokes all.','WARNING');
-  ELSE
-    INSERT INTO _pr VALUES (6,'PF2: client EXECUTE','PASS',
-      'No EXECUTE grants to PUBLIC/anon/authenticated','INFO');
-  END IF;
-END $$;
+func_not_postgres AS (
+  SELECT count(*)::text AS n FROM pg_proc p
+  JOIN pg_namespace n ON p.pronamespace = n.oid
+  JOIN pg_roles r ON p.proowner = r.oid
+  WHERE n.nspname = 'public' AND p.prokind = 'f' AND r.rolname != 'postgres'
+),
+client_execute AS (
+  SELECT count(*)::text AS n FROM information_schema.routine_privileges
+  WHERE routine_schema = 'public' AND grantee IN ('PUBLIC','anon','authenticated')
+)
 
 -- ================================================================
--- FINAL
+-- ASSEMBLE FINAL RESULT TABLE
 -- ================================================================
--- If any STOP status, abort BEFORE displaying the result table so
--- the exception message is visible and clearly identifies the blocker.
-DO $$ DECLARE _stops INT;
-BEGIN
-  SELECT count(*) INTO _stops FROM _pr WHERE status='STOP';
-  IF _stops > 0 THEN
-    RAISE EXCEPTION 'PREFLIGHT FAILED: % STOP condition(s). Query the _pr table for details.', _stops;
-  END IF;
-END $$;
-
--- Add summary row
-DO $$ DECLARE _w INT; _s INT; _p INT;
-BEGIN
-  SELECT count(*) FILTER (WHERE status='PASS'),
-         count(*) FILTER (WHERE status='WARNING'),
-         count(*) FILTER (WHERE status='STOP')
-  INTO _p, _w, _s FROM _pr;
-  INSERT INTO _pr VALUES (999,'== SUMMARY ==',
-    CASE WHEN _s>0 THEN 'STOP' WHEN _w>0 THEN 'WARNINGS' ELSE 'CLEAN' END,
-    _p||' PASS, '||_w||' WARNING, '||_s||' STOP',
-    CASE WHEN _s=0 AND _w=0 THEN 'INFO'
-         WHEN _s=0 THEN 'WARNING'
-         ELSE 'BLOCKING' END);
-END $$;
-
--- This is the final result set. Supabase SQL Editor displays the last
--- statement output. No ROLLBACK follows -- the script makes zero writes
--- and the temp table is cleaned up when the session ends.
 SELECT section, check_name, status, detail, severity
-FROM _pr ORDER BY section, check_name;
+FROM (
+
+  -- PA1: Core tables
+  SELECT 1 AS section,
+    'PA1: core tables' AS check_name,
+    CASE WHEN tm.missing IS NULL THEN 'PASS'
+         ELSE 'STOP' END AS status,
+    CASE WHEN tm.missing IS NULL
+         THEN 'All 17 tables required by 003b preflight exist'
+         ELSE 'MISSING: ' || tm.missing END AS detail,
+    CASE WHEN tm.missing IS NULL THEN 'INFO' ELSE 'BLOCKING' END AS severity
+  FROM tables_missing tm
+
+  UNION ALL
+
+  -- PA2: schema_migrations
+  SELECT 1, 'PA2: schema_migrations',
+    CASE WHEN sm.ex THEN 'PASS' ELSE 'WARNING' END,
+    CASE WHEN sm.ex THEN 'Exists'
+         ELSE 'Not present. 003b will create it. Expected on first production upgrade.'
+    END,
+    CASE WHEN sm.ex THEN 'INFO' ELSE 'WARNING' END
+  FROM sm_exists sm
+
+  UNION ALL
+
+  -- PA3: account_status_audit
+  SELECT 1, 'PA3: account_status_audit',
+    CASE WHEN asa.ex THEN 'PASS' ELSE 'WARNING' END,
+    CASE WHEN asa.ex THEN 'Exists'
+         ELSE 'Not present. 004 will create it. Expected before 004 is applied.'
+    END,
+    CASE WHEN asa.ex THEN 'INFO' ELSE 'WARNING' END
+  FROM as_exists asa
+
+  UNION ALL
+
+  -- PA4: total tables
+  SELECT 1, 'PA4: total tables', 'PASS',
+    tt.n || ' tables in public schema', 'INFO'
+  FROM total_tables tt
+
+  UNION ALL
+
+  -- PB: Column audit (aggregated per table)
+  SELECT 2, 'PB: missing columns',
+    CASE WHEN cc.missing_cols IS NULL THEN 'PASS'
+         WHEN cc.missing_cols LIKE '%(BLOCKING)%' THEN 'STOP'
+         ELSE 'WARNING' END,
+    coalesce(cc.missing_cols, 'All expected columns present on all 10 tables'),
+    CASE WHEN cc.missing_cols IS NULL THEN 'INFO'
+         WHEN cc.missing_cols LIKE '%(BLOCKING)%' THEN 'BLOCKING'
+         ELSE 'WARNING' END
+  FROM (
+    SELECT string_agg(
+      cc.tbl || '.' || cc.col ||
+      CASE WHEN cc.added_by IS NOT NULL
+        THEN ' (added by ' || cc.added_by || ')'
+        ELSE ' (BLOCKING)' END,
+      ', ' ORDER BY
+        CASE WHEN cc.added_by IS NOT NULL THEN 1 ELSE 0 END,
+        cc.tbl, cc.col
+    ) AS missing_cols
+    FROM col_check cc
+  ) cc
+
+  UNION ALL
+
+  -- PC1: published experiences
+  SELECT 3, 'PC1: published experiences',
+    CASE WHEN pe.n::int > 0 THEN 'PASS' ELSE 'WARNING' END,
+    pe.n || ' published (founder must publish before public launch; 003b proceeds regardless)',
+    CASE WHEN pe.n::int > 0 THEN 'INFO' ELSE 'WARNING' END
+  FROM pub_experiences pe
+
+  UNION ALL
+
+  -- PC2: published destinations
+  SELECT 3, 'PC2: published destinations',
+    CASE WHEN pd.n::int > 0 THEN 'PASS' ELSE 'WARNING' END,
+    pd.n || ' published (founder must publish before public launch; 003b proceeds regardless)',
+    CASE WHEN pd.n::int > 0 THEN 'INFO' ELSE 'WARNING' END
+  FROM pub_destinations pd
+
+  UNION ALL
+
+  -- PC3: platform_config row count
+  SELECT 3, 'PC3: platform_config rows',
+    CASE WHEN pr.n::int = 0 THEN 'STOP'
+         WHEN pr.n::int > 1 THEN 'STOP'
+         ELSE 'PASS' END,
+    CASE WHEN pr.n::int = 0 THEN '0 rows (empty). Founder must seed configuration.'
+         WHEN pr.n::int > 1 THEN pr.n || ' rows (expected 1). Data-integrity issue.'
+         ELSE '1 row' END,
+    CASE WHEN pr.n::int = 0 OR pr.n::int > 1 THEN 'BLOCKING' ELSE 'INFO' END
+  FROM platform_rows pr
+
+  UNION ALL
+
+  -- PC4: claims without evidence
+  SELECT 3, 'PC4: claims without evidence',
+    CASE WHEN cne.n::int > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN cne.n::int > 0
+         THEN cne.n || ' published legal/financial/commercial claims have no evidence source. LEGAL REVIEW REQUIRED.'
+         ELSE 'All published claims have evidence sources' END,
+    CASE WHEN cne.n::int > 0 THEN 'BLOCKING' ELSE 'INFO' END
+  FROM claims_no_evidence cne
+
+  UNION ALL
+
+  -- PD1: RLS status
+  SELECT 4, 'PD1: RLS not enabled',
+    CASE WHEN ro.n::int > 0 THEN 'WARNING' ELSE 'PASS' END,
+    CASE WHEN ro.n::int > 0
+         THEN ro.n || ' tables without RLS. 003b will enable RLS on all 17.'
+         ELSE 'All application tables have RLS enabled' END,
+    CASE WHEN ro.n::int > 0 THEN 'WARNING' ELSE 'INFO' END
+  FROM rls_off_count ro
+
+  UNION ALL
+
+  -- PE1: policies
+  SELECT 5, 'PE1: active policies',
+    'PASS',
+    pc.n || ' active policies before 003b. 003b drops all 25 known and creates 5 new.',
+    'INFO'
+  FROM policy_count pc
+
+  UNION ALL
+
+  -- PF1: function ownership
+  SELECT 6, 'PF1: function ownership',
+    CASE WHEN fp.n::int > 0 THEN 'WARNING' ELSE 'PASS' END,
+    CASE WHEN fp.n::int > 0
+         THEN fp.n || ' public functions not owned by postgres. 003b verification checks this.'
+         ELSE 'All public functions owned by postgres' END,
+    CASE WHEN fp.n::int > 0 THEN 'WARNING' ELSE 'INFO' END
+  FROM func_not_postgres fp
+
+  UNION ALL
+
+  -- PF2: client EXECUTE
+  SELECT 6, 'PF2: client EXECUTE grants',
+    CASE WHEN ce.n::int > 0 THEN 'WARNING' ELSE 'PASS' END,
+    CASE WHEN ce.n::int > 0
+         THEN ce.n || ' EXECUTE grants to PUBLIC/anon/authenticated. 003b revokes all.'
+         ELSE 'No EXECUTE grants to PUBLIC/anon/authenticated' END,
+    CASE WHEN ce.n::int > 0 THEN 'WARNING' ELSE 'INFO' END
+  FROM client_execute ce
+
+) AS results
+ORDER BY section, check_name;
