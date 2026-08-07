@@ -99,13 +99,13 @@
     },
     {
       "path": "supabase/runbooks/fresh_staging_installation.md",
-      "sha256": "DED0F661FD247D4D97DB07C110CF9947AB76CCFEDFE3C5799469E8C1CD949B39",
+      "sha256": "804F133EF668EFAC8BA74FAA206ED9AC4DD188E2AD342B6231EC0F85004CE6EC",
       "bytes": 5531,
       "role": "fresh staging installation runbook"
     },
     {
       "path": "supabase/runbooks/production_upgrade.md",
-      "sha256": "4B89EE7FEC713F7DF3587B2BA44A806253010B8E5BABBD0422C4F3876D498734",
+      "sha256": "044BA11744733F5E90149BD15C60DE739050BD53AE4CB101925F5CC2DE29F39F",
       "bytes": 6695,
       "role": "production upgrade runbook"
     },
