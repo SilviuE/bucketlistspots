@@ -10,8 +10,6 @@
 --           PASS    = no issue.
 -- ================================================================
 
-BEGIN;
-
 CREATE TEMP TABLE _pr (
   section  INTEGER NOT NULL,
   check_name TEXT   NOT NULL,
@@ -334,31 +332,33 @@ END $$;
 -- ================================================================
 -- FINAL
 -- ================================================================
-SELECT section, check_name, status, detail, severity
-FROM _pr ORDER BY section, check_name;
-
--- If any STOP status, abort
+-- If any STOP status, abort BEFORE displaying the result table so
+-- the exception message is visible and clearly identifies the blocker.
 DO $$ DECLARE _stops INT;
 BEGIN
   SELECT count(*) INTO _stops FROM _pr WHERE status='STOP';
   IF _stops > 0 THEN
-    RAISE EXCEPTION 'PREFLIGHT FAILED: % STOP condition(s). See result table above.', _stops;
+    RAISE EXCEPTION 'PREFLIGHT FAILED: % STOP condition(s). Query the _pr table for details.', _stops;
   END IF;
 END $$;
 
--- Summary
+-- Add summary row
 DO $$ DECLARE _w INT; _s INT; _p INT;
 BEGIN
   SELECT count(*) FILTER (WHERE status='PASS'),
          count(*) FILTER (WHERE status='WARNING'),
          count(*) FILTER (WHERE status='STOP')
   INTO _p, _w, _s FROM _pr;
-  RAISE NOTICE 'PREFLIGHT SUMMARY: % PASS, % WARNING, % STOP', _p, _w, _s;
-  IF _w = 0 AND _s = 0 THEN
-    RAISE NOTICE 'RESULT: CLEAN - production upgrade may proceed after backup confirmation.';
-  ELSIF _s = 0 THEN
-    RAISE NOTICE 'RESULT: % WARNING(S) - review each WARNING before proceeding.', _w;
-  END IF;
+  INSERT INTO _pr VALUES (999,'== SUMMARY ==',
+    CASE WHEN _s>0 THEN 'STOP' WHEN _w>0 THEN 'WARNINGS' ELSE 'CLEAN' END,
+    _p||' PASS, '||_w||' WARNING, '||_s||' STOP',
+    CASE WHEN _s=0 AND _w=0 THEN 'INFO'
+         WHEN _s=0 THEN 'WARNING'
+         ELSE 'BLOCKING' END);
 END $$;
 
-ROLLBACK;
+-- This is the final result set. Supabase SQL Editor displays the last
+-- statement output. No ROLLBACK follows -- the script makes zero writes
+-- and the temp table is cleaned up when the session ends.
+SELECT section, check_name, status, detail, severity
+FROM _pr ORDER BY section, check_name;
