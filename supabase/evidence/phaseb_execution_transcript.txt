@@ -78,3 +78,28 @@ Zero-policy tables:    14
 Schema_migrations grants: postgres only (service_role/anonymous/auth/PUBLIC revoked)
 
 PHASE B HARNESS: EXECUTION COMPLETE (exit 0)
+
+================================================================
+PRODUCTION MIGRATION CHAIN — COMPLETED 2026-08-07
+================================================================
+Target  : nmyhytrnzfhdstqazttb (production)
+Commit  : c409bac (review/terms-sections-6-7)
+
+P1 002_webhook_infrastructure_upgrade.sql  — EXECUTED + VERIFIED
+P2 terms_acceptance.sql                     — EXECUTED + VERIFIED
+P3 P3_publication_columns.sql               — APPLIED manual-equivalent + VERIFIED
+P4 P4_guides_columns.sql                    — EXECUTED + VERIFIED
+P5 P5_policy_reconciliation.sql             — EXECUTED + VERIFIED
+1  003b_rls_privilege_hardening.sql         — EXECUTED + VERIFIED
+2  004_account_suspension.sql               — EXECUTED + VERIFIED
+—  production_verification.sql              — Sections 1-11 PASS, zero FAIL
+
+Note: First verification attempt used Supabase RLS test mode
+(_vr does not exist). Rerun normally — all checks passed.
+This was a verification-mode issue, not a migration failure.
+
+Production backup: 2026-08-07 01:08 UTC physical backup
+Staging: tqooyiyqsidbemzlcsfp — migrations applied separately
+Main branch: untouched
+Terms: DRAFT
+Stripe/JustGiving/live launch: disabled

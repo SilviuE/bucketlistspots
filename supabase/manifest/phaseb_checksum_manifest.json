@@ -105,9 +105,15 @@
     },
     {
       "path": "supabase/evidence/phaseb_execution_transcript.txt",
-      "sha256": "51A04F65975344352A4A97DA9BAC3346FBDA74789EFE4EE6884504FF132D77CF",
+      "sha256": "B52AADA25E88FCCBD011990D19AA8D95AA54021870AADED2F64B6BAE746A58CE",
       "bytes": 3862,
-      "role": "redacted disposable DB execution transcript"
+      "role": "redacted disposable DB execution transcript + production completion"
+    },
+    {
+      "path": "supabase/evidence/production-evidence-2026-08-07.md",
+      "sha256": "A0B00F963E9B2E9D603F1F3486B361AD01812EBF61D0EE2427B2111C21987823",
+      "bytes": 1799,
+      "role": "production migration evidence record — 2026-08-07"
     }
   ]
 }
