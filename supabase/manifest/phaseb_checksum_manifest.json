@@ -44,6 +44,12 @@
       "role": "production prerequisite P5 — drop 12 legacy policies before 003b"
     },
     {
+      "path": "supabase/migrations/005_guides_agency_price.sql",
+      "sha256": "086DCB140D15BD6D3C71B10B0E3D7116858AE54BC02C6509BF6786101113028D",
+      "bytes": 1874,
+      "role": "additive — agency_price INTEGER on guides (idempotent)"
+    },
+    {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
       "sha256": "05812DDA5931D8D486E27537F8354AC36F0035235C76DD2031D3284843D69FDB",
       "bytes": 47756,
@@ -117,6 +123,7 @@
     }
   ]
 }
+
 
 
 
