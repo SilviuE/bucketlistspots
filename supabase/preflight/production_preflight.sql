@@ -6,7 +6,37 @@
 -- Guarantee: Every defined check always returns exactly one row.
 --           Absence of inspected objects produces PASS, WARNING or
 --           STOP — never suppresses the row.
+-- Gate    : Verifies all 17 required tables exist BEFORE the SELECT
+--           is parsed. If any are absent, raises an exception with
+--           the list of missing tables. This prevents parse errors
+--           on direct table references later in the CTEs.
 -- ================================================================
+
+-- Verify required tables exist before parsing the SELECT
+DO $$ DECLARE
+  _missing TEXT := '';
+  _tbl TEXT;
+BEGIN
+  FOREACH _tbl IN ARRAY ARRAY[
+    'users','guides','experiences','destinations',
+    'guide_applications','ambassador_applications',
+    'platform_config','transactions',
+    'webhook_event_inbox','booking_confirmations',
+    'terms_acceptance','payment_reports',
+    'testimonials','claims_registry',
+    'fundraising_pages','destination_charities',
+    'posts'
+  ] LOOP
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=_tbl) THEN
+      _missing := _missing || _tbl || ', ';
+    END IF;
+  END LOOP;
+
+  IF _missing != '' THEN
+    RAISE EXCEPTION 'PREFLIGHT STOP: required table(s) missing: %', rtrim(_missing, ', ');
+  END IF;
+END $$;
 
 WITH
 

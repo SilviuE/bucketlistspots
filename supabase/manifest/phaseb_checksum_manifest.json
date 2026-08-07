@@ -33,7 +33,7 @@
     },
     {
       "path": "supabase/preflight/production_preflight.sql",
-      "sha256": "BA8471E95C265BA570330139B8A9B8E3C586E676EE096B19C0C660B939BF56EE",
+      "sha256": "973163B311380BA61009E430E9EAA9DA7B7754D925F34E9598DCB87ED205E047",
       "bytes": 16760,
       "role": "production read-only preflight/reconciliation"
     },
@@ -81,4 +81,5 @@
     }
   ]
 }
+
 
