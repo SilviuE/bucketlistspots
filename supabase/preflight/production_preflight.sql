@@ -186,18 +186,20 @@ scalars AS (
       WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
     ) AS missing_charities,
 
-    -- PC: data condition
-    COALESCE((SELECT count(*) FROM public.experiences WHERE is_published = true), 0) AS pub_experiences,
-    COALESCE((SELECT count(*) FROM public.destinations WHERE is_published = true), 0) AS pub_destinations,
+    -- PC: data condition (to_jsonb avoids parse errors on absent columns)
+    COALESCE((SELECT count(*) FROM public.experiences e
+      WHERE (to_jsonb(e)->>'is_published')::boolean = true), 0) AS pub_experiences,
+    COALESCE((SELECT count(*) FROM public.destinations d
+      WHERE (to_jsonb(d)->>'is_published')::boolean = true), 0) AS pub_destinations,
     COALESCE((SELECT count(*) FROM public.platform_config), 0) AS platform_rows,
-    COALESCE((SELECT count(*) FROM public.claims_registry
-      WHERE claim_type IN ('legal','commercial','financial')
-        AND publication_status = 'published'
-        AND (evidence_source IS NULL OR evidence_url_or_reference IS NULL)), 0) AS claims_no_evidence,
+    COALESCE((SELECT count(*) FROM public.claims_registry c
+      WHERE (to_jsonb(c)->>'claim_type') IN ('legal','commercial','financial')
+        AND (to_jsonb(c)->>'publication_status') = 'published'
+        AND ((to_jsonb(c)->>'evidence_source') IS NULL
+          OR (to_jsonb(c)->>'evidence_url_or_reference') IS NULL)), 0) AS claims_no_evidence,
     COALESCE((SELECT count(*) FROM (
-      SELECT session_id FROM public.terms_acceptance
-      GROUP BY session_id HAVING count(*) > 1
-    ) sub), 0) AS terms_duplicates,
+      SELECT (to_jsonb(t)->>'session_id') AS sid FROM public.terms_acceptance t
+    ) sub GROUP BY sid HAVING count(*) > 1), 0) AS terms_duplicates,
 
     -- PD: RLS
     COALESCE((SELECT count(*) FROM pg_class c

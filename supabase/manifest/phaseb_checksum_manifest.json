@@ -1,4 +1,4 @@
-﻿{
+{
   "commit": "41dcbd6eb548f0eec3b53a382fc2bcc7e38fa0c3",
   "branch": "review/terms-sections-6-7",
   "generated_at": "2026-08-06T22:55:00+01:00",
@@ -33,7 +33,7 @@
     },
     {
       "path": "supabase/preflight/production_preflight.sql",
-      "sha256": "B72A1F8B84BCF9A16D099E741F7942B073A2C7DFEA76DD514D5FECF7752D31FE",
+      "sha256": "BA8471E95C265BA570330139B8A9B8E3C586E676EE096B19C0C660B939BF56EE",
       "bytes": 16760,
       "role": "production read-only preflight/reconciliation"
     },
@@ -81,3 +81,4 @@
     }
   ]
 }
+
