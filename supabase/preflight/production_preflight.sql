@@ -34,7 +34,12 @@ BEGIN
   END LOOP;
 
   IF _missing != '' THEN
-    RAISE EXCEPTION 'PREFLIGHT STOP: required table(s) missing: %', rtrim(_missing, ', ');
+    RAISE EXCEPTION 'PREFLIGHT STOP: required table(s) missing: %'
+      '  Prerequisites before 003b:'
+      '    webhook_event_inbox, booking_confirmations -> 002_webhook_infrastructure_upgrade.sql'
+      '    terms_acceptance -> terms_acceptance.sql'
+      '  See supabase/runbooks/production_upgrade.md for the full chain.',
+      rtrim(_missing, ', ');
   END IF;
 END $$;
 

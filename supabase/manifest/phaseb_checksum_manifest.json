@@ -33,7 +33,7 @@
     },
     {
       "path": "supabase/preflight/production_preflight.sql",
-      "sha256": "973163B311380BA61009E430E9EAA9DA7B7754D925F34E9598DCB87ED205E047",
+      "sha256": "74D92ADC0F6B8BB3287963F34CDB932128D8E0E10CCF47C5BA01D6E014E505BA",
       "bytes": 16760,
       "role": "production read-only preflight/reconciliation"
     },
@@ -69,7 +69,7 @@
     },
     {
       "path": "supabase/runbooks/production_upgrade.md",
-      "sha256": "F1219163CED704805AA5F818FA987EBE5F4DED9D693E7B1E7D080A7ECFF9656B",
+      "sha256": "4B89EE7FEC713F7DF3587B2BA44A806253010B8E5BABBD0422C4F3876D498734",
       "bytes": 6695,
       "role": "production upgrade runbook"
     },

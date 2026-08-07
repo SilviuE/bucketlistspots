@@ -3,8 +3,8 @@
 Target: **production Supabase** project `nmyhytrnzfhdstqazttb` ONLY.
 Never run on staging (`tqooyiyqsidbemzlcsfp`).
 
-> **CRITICAL**: This path must NEVER execute the fresh baseline migration
-> (`0000_core_schema.sql`) against existing production tables.
+> **CRITICAL**: This path must NEVER execute `0000_core_schema.sql`.
+> Terms remain DRAFT. Stripe/JustGiving/live launch remain disabled.
 
 ---
 
@@ -20,140 +20,115 @@ git status --short
 powershell -NoProfile -ExecutionPolicy Bypass -File supabase\manifest\verify_checksums.ps1
 ```
 
-All hashes must match the approved commit. Working tree must be clean. Checksum verifier must exit 0.
+All hashes must match the approved commit. Working tree must be clean. Verifier must exit 0.
 
 ### Step 0b -- Confirm Backup
 
-Supabase Dashboard -> Database -> Backups. Verify a PITR (Point-In-Time Recovery) backup exists with a timestamp BEFORE any production write. Record the backup timestamp.
-
-**If PITR backup is unavailable** (free-tier project), create a manual logical backup. Use a secure method that does NOT expose the password in command history:
-
-```powershell
-# Read password from a secure prompt, not command-line
-$pw = Read-Host -AsSecureString "DB password"
-$bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw)
-$plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-pg_dump "postgresql://postgres:${plain}@db.nmyhytrnzfhdstqazttb.supabase.co:5432/postgres" -F c -Z 9 -f "prod-pre-003b-$(Get-Date -Format yyyyMMdd-HHmm).dump"
-[System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-```
-
-Verify the dump is readable:
-```powershell
-pg_restore --list "prod-pre-003b-*.dump" | Select-Object -First 5
-```
-
-Record SHA-256 of the dump file for evidence.
+Supabase Dashboard -> `nmyhytrnzfhdstqazttb` -> Database -> Backups. Verify a PITR backup exists. If unavailable, use the secure Read-Host backup procedure (see below).
 
 ### Step 0c -- Run Production Preflight
 
-Open SQL Editor on **PRODUCTION** (`nmyhytrnzfhdstqazttb`). Paste ENTIRE `supabase/preflight/production_preflight.sql`. Run.
+Open SQL Editor on PRODUCTION. Paste ENTIRE `supabase/preflight/production_preflight.sql`. Run.
 
-The script returns a structured result table: `section | check_name | status | detail | severity`.
+**If PREFLIGHT STOP on missing tables:** The error message lists which tables are missing and which prerequisite migration resolves them. Run P1 and/or P2 from Section 1 below, then re-run the preflight.
 
-**How to read the result:**
-
-| Status | Meaning |
-|---|---|
-| PASS | No issue. Proceed. |
-| WARNING | Review required. Does NOT block migration. |
-| STOP | BLOCKING. Migration must not proceed. |
-
-**Expected WARNINGs (do not block):**
-- `PA2: schema_migrations` -- not present. 003b creates it. This is expected on first production upgrade.
-- `PA3: account_status_audit` -- not present. 004 creates it. Expected before 004 runs.
-- `PB: users columns` -- `avatar(003b adds)`. 003b Section 3 adds this column.
-- `PC1/PC2: published experiences/destinations` -- 0 published. Founder must publish before public launch. 003b proceeds regardless.
-- `PD1: RLS status` -- tables without RLS. 003b enables RLS.
-- `PF1/PF2: function ownership/EXECUTE` -- 003b verifies and fixes.
-- `PE1: active policies` -- informational, 003b replaces them.
-
-**STOP conditions (BLOCKING):**
-- Any missing core table from the 17 required by 003b preflight
-- Missing columns on existing tables that 003b requires but does NOT create
-- `platform_config` has 0 or >1 rows
-- Published legal/financial/commercial claims without evidence sources
-- Duplicate `session_id` in `terms_acceptance`
-- The script raises an exception with details
+**If the result table is shown:** all 26 rows present. Review STOP rows. WARNING rows are documented below.
 
 ---
 
-## 1. Upgrade-Only Migrations
+## 1. Full Migration Chain
 
-The baseline (`0000_core_schema.sql`) is **NOT** applied to production.
+`0000_core_schema.sql` is **NEVER** applied to production.
+
+### Prerequisites (before Phase B)
+
 
 | Step | File | Purpose |
 |---|---|---|
-| 1 | `supabase/migrations/003b_rls_privilege_hardening.sql` | RLS hardening, schema_migrations bootstrap, structural validation |
-| 2 | `supabase/migrations/004_account_suspension.sql` | Account suspension: status column, audit table, trigger |
+| P1 | `supabase/migrations/002_webhook_infrastructure_upgrade.sql` | Creates `webhook_event_inbox` and `booking_confirmations`. Adds `idempotency_key` to `transactions`. Creates 3 RPC functions. Conditional UNIQUE on `payment_reports.session_id`. Creates 2 legacy policies. |
+| P2 | `supabase/migrations/terms_acceptance.sql` | Creates `terms_acceptance` from scratch. Adds indexes, RLS, trigger function, 2 legacy policies. |
 
-### Step 1: Apply 003b
+### Phase B Hardening
 
-Open SQL Editor on PRODUCTION. Paste ENTIRE `003b_rls_privilege_hardening.sql`. Run.
+| Step | File | Purpose |
+|---|---|---|
+| 1 | `supabase/migrations/003b_rls_privilege_hardening.sql` | RLS hardening. Drops all 25 known policies (including 4 from P1+P2). Creates 5 hardened policies. Column grants, function EXECUTE lockdown, schema_migrations bootstrap. Supabase_admin defaults advisory. |
+| 2 | `supabase/migrations/004_account_suspension.sql` | Account suspension. `account_status` column on users. Trigger-written audit table. |
 
-**Expected:**
-- `schema_migrations structure validated` -- table bootstrapped and validated
-- `Section 10 HARD: global + schema-scoped postgres defaults applied.`
-- Up to 13 `WARNING: ADVISORY SKIP [42501]` for supabase_admin (normal on hosted Supabase)
-- `VERIFICATION: ALL CHECKS PASSED`
-- `003b_rls_privilege_hardening v3: MIGRATION COMPLETE`
+### Execution Order
 
-**Abort if:** any `RAISE EXCEPTION`, any `ERROR:`, any `CHECKS FAILED`, any `ADVISORY SKIP` with SQLSTATE other than `42501`.
+```
+P1: 002_webhook_infrastructure_upgrade.sql
+P2: terms_acceptance.sql
+1:  003b_rls_privilege_hardening.sql
+2:  004_account_suspension.sql
+```
 
-### Step 2: Apply 004
+### Prerequisite Audit
 
-Open SQL Editor on PRODUCTION. Paste ENTIRE `004_account_suspension.sql`. Run.
+| Step | Tables created | Destructive DDL | Backfills | Idempotent |
+|---|---|---|---|---|
+| P1 | webhook_event_inbox, booking_confirmations | None (CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, conditional UNIQUE) | None | Yes |
+| P2 | terms_acceptance | None (CREATE TABLE IF NOT EXISTS, DROP IF EXISTS for policy/trigger) | None | Yes |
 
-**Expected:**
-- `schema_migrations structure validated`
-- `VERIFICATION 004: ALL CHECKS PASSED`
-- `004_account_suspension: MIGRATION COMPLETE`
+P1 creates 3 RPC functions (`credit_referral_reward`, `credit_ambassador_commission`, `claim_webhook_event` — SECURITY DEFINER, SET search_path = ''). P2 creates 1 trigger function (`reject_terms_acceptance_update_delete` — SECURITY INVOKER, SET search_path = '').
+
+Both P1 and P2 together create 4 legacy policies. 003b (Step 1) drops all 25 known policies and replaces them with 5 hardened policies. 003b also re-hardens function EXECUTE: P1 grants service_role EXECUTE on 3 RPCs; 003b revokes ALL EXECUTE from all roles, then re-grants only those 3 to service_role.
+
+### PASS/STOP Criteria Per Step
+
+| Step | PASS marker | STOP conditions |
+|---|---|---|
+| P1 | Tables created, functions replaced, policies created | Any RAISE EXCEPTION or ERROR. Duplicate session_ids in payment_reports (conditional UNIQUE will WARN). |
+| P2 | Table created, trigger function created, policies created | Any RAISE EXCEPTION or ERROR. |
+| 1 | `VERIFICATION: ALL CHECKS PASSED`, `003b_rls_privilege_hardening v3: MIGRATION COMPLETE` | Any RAISE EXCEPTION, CHECKS FAILED, ADVISORY SKIP with non-42501 SQLSTATE |
+| 2 | `VERIFICATION 004: ALL CHECKS PASSED`, `004_account_suspension: MIGRATION COMPLETE` | Any RAISE EXCEPTION, CHECKS FAILED |
 
 ---
 
 ## 2. Post-Deployment Verification
 
-Run `supabase/test/production_verification.sql` on production. Expected: all checks PASS.
+Run `supabase/test/production_verification.sql` on production. Expected: all PASS.
 
 Smoke tests on production URL:
 | # | Test | Expected |
 |---|---|---|
-| 1 | Homepage loads | 200, guides visible |
+| 1 | Homepage loads | 200 |
 | 2 | `/for-guides` loads | 200 or 301 |
 | 3 | Admin login | success |
-
-### Guide Application Write Test (requires separate approval)
-
-The guide-application submission is a production write. It creates a row in `guide_applications`. Before this test is performed, confirm:
-- No downstream email/SMTP integration is active
-- No webhook endpoints are configured for live Stripe
-- No syndication or notification system is live
-- The test row can be manually reviewed and deleted after verification
-
-**This write test is NOT authorised yet. It requires separate written approval.**
 
 ---
 
 ## 3. Recovery
 
-### Recovery Hierarchy (in order of preference)
+### Hierarchy (in order of preference)
 
-1. **Transaction rollback** -- if 003b or 004 aborts with RAISE EXCEPTION, nothing was applied. The entire migration runs in a single BEGIN...COMMIT. Fix the issue and re-run.
-
-2. **Diagnose** -- review the error message, query affected tables, determine root cause.
-
-3. **PITR / backup restore** -- if the migration applied but verification fails, restore from the pre-migration backup. Supabase Dashboard -> Database -> Restore.
-
-4. **Emergency recovery** -- `003b_emergency_recovery.sql` is committed for **emergency use only**. It drops the 5 hardened policies and recreates them with broader privileges, then re-grants revoked table-level SELECT. **This deliberately restores wider access.** It requires **explicit written approval** before execution. It is NOT an automatic rollback.
+1. **Transaction rollback** -- if any step aborts with RAISE EXCEPTION, nothing was applied (all steps use BEGIN...COMMIT).
+2. **Diagnose** -- review the error, query affected tables.
+3. **PITR/backup restore** -- via Supabase Dashboard -> Database -> Restore.
+4. **Emergency recovery** -- `003b_emergency_recovery.sql` is committed for emergency use only. It deliberately restores broader access. Requires explicit written approval.
 
 ---
 
-## 4. Confirmed Constraints
+## 4. Backup Procedure (if PITR unavailable)
+
+```powershell
+$pw = Read-Host -AsSecureString "DB password"
+$bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw)
+$plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+pg_dump "postgresql://postgres:${plain}@db.nmyhytrnzfhdstqazttb.supabase.co:5432/postgres" -F c -Z 9 -f "prod-pre-migration-$(Get-Date -Format yyyyMMdd-HHmm).dump"
+[System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+```
+
+---
+
+## 5. Confirmed Constraints
 
 | Constraint | Status |
 |---|---|
-| Terms Sections 6 & 7 | **DRAFT** |
-| Stripe live webhook | **NOT configured** |
-| JustGiving live | **NOT configured** |
-| PR merge to main | **NOT authorised** |
-| `0000_core_schema.sql` on production | **NEVER** |
-| Guide application write test | **NOT authorised** (requires separate approval) |
+| Terms Sections 6 & 7 | DRAFT |
+| Stripe live webhook | NOT configured |
+| JustGiving live | NOT configured |
+| PR merge to main | NOT authorised |
+| `0000_core_schema.sql` on production | NEVER |
+| Guide application write test | NOT authorised |
