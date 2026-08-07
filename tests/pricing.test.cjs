@@ -178,6 +178,29 @@ test('Zero fee → zero discount', () => {
   assert.strictEqual(d, 0);
 });
 
+// ─── NaN safety — formatPrice ─────────────────────────────────────
+const { formatPrice } = require('../src/lib/currency');
+
+test('formatPrice: undefined returns empty string', () => {
+  assert.strictEqual(formatPrice(undefined, 'usd'), '');
+});
+
+test('formatPrice: null returns empty string', () => {
+  assert.strictEqual(formatPrice(null, 'usd'), '');
+});
+
+test('formatPrice: NaN returns empty string', () => {
+  assert.strictEqual(formatPrice(NaN, 'usd'), '');
+});
+
+test('formatPrice: 0 is valid', () => {
+  assert.strictEqual(formatPrice(0, 'usd'), '$0');
+});
+
+test('formatPrice: normal value still works', () => {
+  assert.strictEqual(formatPrice(2500, 'usd'), '$2,500');
+});
+
 // ─── Summary ───────────────────────────────────────────────────────
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);

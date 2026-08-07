@@ -7,6 +7,7 @@ export function convert(amountUSD, currency) {
 }
 
 export function formatPrice(amountUSD, currency) {
+  if (amountUSD == null || isNaN(amountUSD)) return '';
   const converted = convert(amountUSD, currency);
   const locale = locales[currency] || 'en-US';
   const code = currency.toUpperCase();

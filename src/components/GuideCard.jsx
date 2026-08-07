@@ -91,13 +91,17 @@ export default function GuideCard({ guide, variant = 'default' }) {
             <Typography variant="body1" fontWeight={800} color="text.primary">
                 {formatPrice(guide.price, currency)}
             </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
-              {formatPrice(guide.agencyPrice, currency)}
-            </Typography>
+            {guide.agencyPrice > 0 && (
+              <Typography variant="caption" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                {formatPrice(guide.agencyPrice, currency)}
+              </Typography>
+            )}
           </Box>
-          <Typography variant="caption" color="secondary.main" fontWeight={600}>
-            Save {Math.round((1 - guide.price / guide.agencyPrice) * 100)}% vs agency
-          </Typography>
+          {guide.agencyPrice > 0 && (
+            <Typography variant="caption" color="secondary.main" fontWeight={600}>
+              Save {Math.round((1 - guide.price / guide.agencyPrice) * 100)}% vs agency
+            </Typography>
+          )}
         </Box>
         <Chip
           label="Book Direct"
