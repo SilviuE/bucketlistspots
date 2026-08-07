@@ -38,6 +38,12 @@
       "role": "production prerequisite P4 — email and tagline on guides"
     },
     {
+      "path": "supabase/migrations/P5_policy_reconciliation.sql",
+      "sha256": "1245215EFCE9556FAD4F0B5A83C1D0B60C050CFA46D0ACCCA479985B5D7654DC",
+      "bytes": 7061,
+      "role": "production prerequisite P5 — drop 12 legacy policies before 003b"
+    },
+    {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
       "sha256": "05812DDA5931D8D486E27537F8354AC36F0035235C76DD2031D3284843D69FDB",
       "bytes": 47756,
@@ -105,5 +111,6 @@
     }
   ]
 }
+
 
 
