@@ -79,16 +79,20 @@ CREATE INDEX IF NOT EXISTS idx_booking_confirmations_booking_ref ON booking_conf
 
 -- 3. payment_reports.session_id UNIQUE (conditional)
 DO $$
+DECLARE _dupes INT;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'payment_reports_session_id_key'
     AND conrelid = 'payment_reports'::regclass
   ) THEN
-    IF (SELECT COUNT(*) FROM (SELECT session_id FROM payment_reports WHERE session_id IS NOT NULL GROUP BY session_id HAVING COUNT(*) > 1) sub) = 0 THEN
+    SELECT count(*) INTO _dupes
+    FROM (SELECT session_id FROM payment_reports WHERE session_id IS NOT NULL GROUP BY session_id HAVING count(*) > 1) sub;
+
+    IF _dupes = 0 THEN
       ALTER TABLE payment_reports ADD CONSTRAINT payment_reports_session_id_key UNIQUE (session_id);
     ELSE
-      RAISE WARNING 'payment_reports: duplicate session_ids exist. Resolve before adding UNIQUE.';
+      RAISE EXCEPTION 'PRE-WRITE STOP: payment_reports has % duplicate non-null session_id(s). Resolve before running P1.', _dupes;
     END IF;
   END IF;
 END $$;
