@@ -33,7 +33,7 @@
     },
     {
       "path": "supabase/preflight/production_preflight.sql",
-      "sha256": "E2E442B56BDC829BF8DD2D6FA679653FA43D440FD88DF0AD8609201717B639F2",
+      "sha256": "F7799DF92E7333825DB4524677FC13523102CE1B6A95D25F956B03B0582A71DE",
       "bytes": 16760,
       "role": "production read-only preflight/reconciliation"
     },
@@ -50,6 +50,12 @@
       "role": "staging-safe post-install verification (Supabase SQL Editor)"
     },
     {
+      "path": "supabase/test/production_verification.sql",
+      "sha256": "642606F1EC4A76E3700206EA7278C39146E68DB7A5FC6103C05FBB44B8C58156",
+      "bytes": 13335,
+      "role": "production post-upgrade verification (Supabase SQL Editor)"
+    },
+    {
       "path": "supabase/docs/checksum_explanation.md",
       "sha256": "3FD1E03EF72D182DB61E34DD22897CFBE216245F9E5CBC25DE200858F374B8C7",
       "bytes": 3178,
@@ -63,7 +69,7 @@
     },
     {
       "path": "supabase/runbooks/production_upgrade.md",
-      "sha256": "6BF56A2594778764C819236D2C5E398B3172E133B8E4FCF5D1BDA83663CCA81F",
+      "sha256": "F1219163CED704805AA5F818FA987EBE5F4DED9D693E7B1E7D080A7ECFF9656B",
       "bytes": 6695,
       "role": "production upgrade runbook"
     },
