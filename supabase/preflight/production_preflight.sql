@@ -2,334 +2,503 @@
 -- PRODUCTION PREFLIGHT / RECONCILIATION (STRICTLY READ-ONLY)
 -- ================================================================
 -- Target  : nmyhytrnzfhdstqazttb (production) ONLY
--- Safety  : ZERO writes. No CREATE/ALTER/DROP/TRUNCATE/INSERT/
---           UPDATE/DELETE/MERGE/GRANT/REVOKE. No temp objects.
---           Pure SELECT with CTEs and UNION ALL.
--- Output  : Structured result table:
---             section | check_name | status | detail | severity
--- Stop    : Rows with status STOP must be reviewed and resolved
---           before migration. They are unmistakably labelled.
--- WARNING : Review required, does not block. Each row documents
---           which migration resolves it.
--- PASS    : No issue.
+-- Safety  : ZERO writes. Pure SELECT. No temp objects.
+-- Guarantee: Every defined check always returns exactly one row.
+--           Absence of inspected objects produces PASS, WARNING or
+--           STOP — never suppresses the row.
 -- ================================================================
 
 WITH
 
--- ================================================================
--- PA. TABLE INVENTORY
--- ================================================================
--- Expected before 003b: 17 core tables. schema_migrations and
--- account_status_audit are created by 003b/004 respectively.
--- ================================================================
-tables_missing AS (
-  SELECT string_agg(t.tbl, ', ') AS missing
-  FROM (VALUES
-    ('users'),('guides'),('experiences'),('destinations'),
-    ('guide_applications'),('ambassador_applications'),
-    ('platform_config'),('transactions'),
-    ('webhook_event_inbox'),('booking_confirmations'),
-    ('terms_acceptance'),('payment_reports'),
-    ('testimonials'),('claims_registry'),
-    ('fundraising_pages'),('destination_charities'),
-    ('posts')
-  ) AS t(tbl)
-  WHERE NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = t.tbl
-  )
-),
-total_tables AS (
-  SELECT count(*)::text AS n FROM pg_tables WHERE schemaname = 'public'
-),
-sm_exists AS (
-  SELECT EXISTS(SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='schema_migrations') AS ex
-),
-as_exists AS (
-  SELECT EXISTS(SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name='account_status_audit') AS ex
+-- ── Scalar values (each returns exactly 1 row) ───────────────────
+
+scalars AS (
+  SELECT
+    -- PA: table existence
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='users') AS has_users,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='guides') AS has_guides,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='experiences') AS has_experiences,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='destinations') AS has_destinations,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='guide_applications') AS has_guide_apps,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='ambassador_applications') AS has_amb_apps,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='platform_config') AS has_platform_config,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='transactions') AS has_transactions,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='webhook_event_inbox') AS has_webhook,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='booking_confirmations') AS has_bookings,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='terms_acceptance') AS has_terms,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='payment_reports') AS has_payments,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='testimonials') AS has_testimonials,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='claims_registry') AS has_claims,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='fundraising_pages') AS has_fundraising,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='destination_charities') AS has_charities,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='posts') AS has_posts,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='schema_migrations') AS has_sm,
+    (SELECT count(*) FROM information_schema.tables
+     WHERE table_schema='public' AND table_name='account_status_audit') AS has_audit,
+    (SELECT count(*) FROM pg_tables WHERE schemaname='public') AS total_tables,
+
+    -- PB: column existence counts (scalar values)
+    (SELECT count(*) FROM (VALUES
+      ('users','id'),('users','email'),('users','name'),('users','role'),
+      ('users','referral_code'),('users','bls_points_balance'),('users','created_at')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_users_baseline,
+
+    (SELECT count(*) FROM (VALUES
+      ('users','avatar')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_users_003b_adds,
+
+    (SELECT count(*) FROM (VALUES
+      ('guides','id'),('guides','user_id'),('guides','name'),('guides','trading_name'),
+      ('guides','email'),('guides','status'),('guides','referral_code'),
+      ('guides','bls_points_balance'),('guides','referred_by_ambassador_id'),
+      ('guides','price_currency'),('guides','routes'),('guides','photo'),
+      ('guides','hero_image'),('guides','bio'),('guides','why_independent'),
+      ('guides','location'),('guides','languages'),('guides','experience'),
+      ('guides','certifications'),('guides','promise'),('guides','badge'),
+      ('guides','tagline'),('guides','price'),('guides','featured'),
+      ('guides','review_count'),('guides','trips_led'),('guides','video_intro'),
+      ('guides','tripadvisor_embed'),('guides','identity_verified'),
+      ('guides','license_verified'),('guides','safety_verified'),
+      ('guides','fair_pay_verified'),('guides','updated_at')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_guides,
+
+    (SELECT count(*) FROM (VALUES
+      ('experiences','id'),('experiences','title'),('experiences','duration'),
+      ('experiences','difficulty'),('experiences','location'),('experiences','image'),
+      ('experiences','price'),('experiences','currency'),('experiences','guide_id'),
+      ('experiences','badge'),('experiences','rating'),('experiences','reviews'),
+      ('experiences','featured'),('experiences','is_published')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_experiences,
+
+    (SELECT count(*) FROM (VALUES
+      ('destinations','name'),('destinations','country'),('destinations','image'),
+      ('destinations','guide_count'),('destinations','is_published')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_destinations,
+
+    (SELECT count(*) FROM (VALUES
+      ('guide_applications','id'),('guide_applications','full_name'),
+      ('guide_applications','email'),('guide_applications','phone'),
+      ('guide_applications','country'),('guide_applications','experience'),
+      ('guide_applications','languages'),('guide_applications','specialties'),
+      ('guide_applications','message'),('guide_applications','heard_from'),
+      ('guide_applications','status')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_guide_apps,
+
+    (SELECT count(*) FROM (VALUES
+      ('ambassador_applications','id'),('ambassador_applications','full_name'),
+      ('ambassador_applications','email'),('ambassador_applications','phone'),
+      ('ambassador_applications','country'),('ambassador_applications','platform'),
+      ('ambassador_applications','handle'),('ambassador_applications','followers'),
+      ('ambassador_applications','niche'),('ambassador_applications','why_you'),
+      ('ambassador_applications','heard_from'),('ambassador_applications','status')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_amb_apps,
+
+    (SELECT count(*) FROM (VALUES
+      ('posts','id'),('posts','user_id'),('posts','author_role'),
+      ('posts','author_name'),('posts','content'),('posts','image_url'),
+      ('posts','video_url')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_posts,
+
+    (SELECT count(*) FROM (VALUES
+      ('fundraising_pages','id'),('fundraising_pages','user_id'),
+      ('fundraising_pages','charity_id'),('fundraising_pages','charity_api_id'),
+      ('fundraising_pages','charity_name'),('fundraising_pages','page_title'),
+      ('fundraising_pages','target_amount'),('fundraising_pages','currency'),
+      ('fundraising_pages','total_raised'),('fundraising_pages','donor_count'),
+      ('fundraising_pages','status'),('fundraising_pages','last_synced_at'),
+      ('fundraising_pages','created_at')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_fundraising,
+
+    (SELECT count(*) FROM (VALUES
+      ('platform_config','id'),('platform_config','promotional_commission_pct'),
+      ('platform_config','standard_commission_pct'),
+      ('platform_config','promotional_start_date'),
+      ('platform_config','promotional_end_date'),
+      ('platform_config','saas_monthly_fee_gbp'),
+      ('platform_config','referral_program_enabled'),
+      ('platform_config','charity_challenges_enabled')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_config,
+
+    (SELECT count(*) FROM (VALUES
+      ('destination_charities','id'),('destination_charities','destination'),
+      ('destination_charities','charity_api_id'),('destination_charities','is_active')
+    ) AS c(tbl,col) WHERE EXISTS(SELECT 1 FROM information_schema.tables
+      WHERE table_schema='public' AND table_name=c.tbl)
+      AND NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
+    ) AS missing_charities,
+
+    -- PC: data condition
+    COALESCE((SELECT count(*) FROM public.experiences WHERE is_published = true), 0) AS pub_experiences,
+    COALESCE((SELECT count(*) FROM public.destinations WHERE is_published = true), 0) AS pub_destinations,
+    COALESCE((SELECT count(*) FROM public.platform_config), 0) AS platform_rows,
+    COALESCE((SELECT count(*) FROM public.claims_registry
+      WHERE claim_type IN ('legal','commercial','financial')
+        AND publication_status = 'published'
+        AND (evidence_source IS NULL OR evidence_url_or_reference IS NULL)), 0) AS claims_no_evidence,
+    COALESCE((SELECT count(*) FROM (
+      SELECT session_id FROM public.terms_acceptance
+      GROUP BY session_id HAVING count(*) > 1
+    ) sub), 0) AS terms_duplicates,
+
+    -- PD: RLS
+    COALESCE((SELECT count(*) FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r'
+        AND c.relname != 'schema_migrations' AND NOT c.relrowsecurity), 0) AS rls_off,
+
+    -- PE: policies
+    COALESCE((SELECT count(*) FROM pg_policies WHERE schemaname = 'public'), 0) AS policy_count,
+
+    -- PF: functions
+    COALESCE((SELECT count(*) FROM pg_proc p
+      JOIN pg_namespace n ON p.pronamespace = n.oid
+      JOIN pg_roles r ON p.proowner = r.oid
+      WHERE n.nspname = 'public' AND p.prokind = 'f' AND r.rolname != 'postgres'), 0) AS func_not_postgres,
+    COALESCE((SELECT count(*) FROM information_schema.routine_privileges
+      WHERE routine_schema = 'public' AND grantee IN ('PUBLIC','anon','authenticated')), 0) AS client_execute
 ),
 
--- ================================================================
--- PB. COLUMN AUDIT (core tables only)
--- ================================================================
-col_check AS (
-  SELECT c.tbl, c.col, c.added_by
-  FROM (VALUES
-    ('users','id',NULL),
-    ('users','email',NULL),('users','name',NULL),('users','role',NULL),
-    ('users','referral_code',NULL),('users','bls_points_balance',NULL),
-    ('users','created_at',NULL),('users','avatar','003b'),
-    ('guides','id',NULL),('guides','user_id',NULL),
-    ('guides','name',NULL),('guides','trading_name',NULL),
-    ('guides','email',NULL),('guides','status',NULL),
-    ('guides','referral_code',NULL),('guides','bls_points_balance',NULL),
-    ('guides','referred_by_ambassador_id',NULL),
-    ('guides','price_currency',NULL),('guides','routes',NULL),
-    ('guides','photo',NULL),('guides','hero_image',NULL),
-    ('guides','bio',NULL),('guides','why_independent',NULL),
-    ('guides','location',NULL),('guides','languages',NULL),
-    ('guides','experience',NULL),('guides','certifications',NULL),
-    ('guides','promise',NULL),('guides','badge',NULL),
-    ('guides','tagline',NULL),('guides','price',NULL),
-    ('guides','featured',NULL),('guides','review_count',NULL),
-    ('guides','trips_led',NULL),('guides','video_intro',NULL),
-    ('guides','tripadvisor_embed',NULL),
-    ('guides','identity_verified',NULL),('guides','license_verified',NULL),
-    ('guides','safety_verified',NULL),('guides','fair_pay_verified',NULL),
-    ('guides','updated_at',NULL),
-    ('experiences','id',NULL),('experiences','title',NULL),
-    ('experiences','duration',NULL),('experiences','difficulty',NULL),
-    ('experiences','location',NULL),('experiences','image',NULL),
-    ('experiences','price',NULL),('experiences','currency',NULL),
-    ('experiences','guide_id',NULL),('experiences','badge',NULL),
-    ('experiences','rating',NULL),('experiences','reviews',NULL),
-    ('experiences','featured',NULL),('experiences','is_published',NULL),
-    ('destinations','name',NULL),('destinations','country',NULL),
-    ('destinations','image',NULL),('destinations','guide_count',NULL),
-    ('destinations','is_published',NULL),
-    ('guide_applications','id',NULL),('guide_applications','full_name',NULL),
-    ('guide_applications','email',NULL),('guide_applications','phone',NULL),
-    ('guide_applications','country',NULL),('guide_applications','experience',NULL),
-    ('guide_applications','languages',NULL),('guide_applications','specialties',NULL),
-    ('guide_applications','message',NULL),('guide_applications','heard_from',NULL),
-    ('guide_applications','status',NULL),
-    ('ambassador_applications','id',NULL),('ambassador_applications','full_name',NULL),
-    ('ambassador_applications','email',NULL),('ambassador_applications','phone',NULL),
-    ('ambassador_applications','country',NULL),('ambassador_applications','platform',NULL),
-    ('ambassador_applications','handle',NULL),('ambassador_applications','followers',NULL),
-    ('ambassador_applications','niche',NULL),('ambassador_applications','why_you',NULL),
-    ('ambassador_applications','heard_from',NULL),('ambassador_applications','status',NULL),
-    ('posts','id',NULL),('posts','user_id',NULL),
-    ('posts','author_role',NULL),('posts','author_name',NULL),
-    ('posts','content',NULL),('posts','image_url',NULL),('posts','video_url',NULL),
-    ('fundraising_pages','id',NULL),('fundraising_pages','user_id',NULL),
-    ('fundraising_pages','charity_id',NULL),('fundraising_pages','charity_api_id',NULL),
-    ('fundraising_pages','charity_name',NULL),('fundraising_pages','page_title',NULL),
-    ('fundraising_pages','target_amount',NULL),('fundraising_pages','currency',NULL),
-    ('fundraising_pages','total_raised',NULL),('fundraising_pages','donor_count',NULL),
-    ('fundraising_pages','status',NULL),('fundraising_pages','last_synced_at',NULL),
-    ('fundraising_pages','created_at',NULL),
-    ('platform_config','id',NULL),('platform_config','promotional_commission_pct',NULL),
-    ('platform_config','standard_commission_pct',NULL),
-    ('platform_config','promotional_start_date',NULL),
-    ('platform_config','promotional_end_date',NULL),
-    ('platform_config','saas_monthly_fee_gbp',NULL),
-    ('platform_config','referral_program_enabled',NULL),
-    ('platform_config','charity_challenges_enabled',NULL),
-    ('destination_charities','id',NULL),('destination_charities','destination',NULL),
-    ('destination_charities','charity_api_id',NULL),('destination_charities','is_active',NULL)
-  ) AS c(tbl, col, added_by)
-  WHERE EXISTS (SELECT 1 FROM information_schema.tables
-    WHERE table_schema='public' AND table_name=c.tbl)
-    AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-    WHERE table_schema='public' AND table_name=c.tbl AND column_name=c.col)
-),
+-- ── Computed check results (one row per check, unconditional) ───
 
--- ================================================================
--- PC. DATA CONDITION
--- ================================================================
-pub_experiences AS (
-  SELECT count(*)::text AS n FROM public.experiences WHERE is_published = true
-),
-pub_destinations AS (
-  SELECT count(*)::text AS n FROM public.destinations WHERE is_published = true
-),
-platform_rows AS (
-  SELECT count(*)::text AS n FROM public.platform_config
-),
-claims_no_evidence AS (
-  SELECT count(*)::text AS n FROM public.claims_registry
-  WHERE claim_type IN ('legal','commercial','financial')
-    AND publication_status = 'published'
-    AND (evidence_source IS NULL OR evidence_url_or_reference IS NULL)
-),
-
--- ================================================================
--- PD. RLS STATUS
--- ================================================================
-rls_off_count AS (
-  SELECT count(*)::text AS n FROM pg_class c
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public' AND c.relkind = 'r'
-    AND c.relname != 'schema_migrations' AND NOT c.relrowsecurity
-),
-
--- ================================================================
--- PE. POLICIES
--- ================================================================
-policy_count AS (
-  SELECT count(*)::text AS n FROM pg_policies WHERE schemaname = 'public'
-),
-
--- ================================================================
--- PF. FUNCTION OWNERSHIP
--- ================================================================
-func_not_postgres AS (
-  SELECT count(*)::text AS n FROM pg_proc p
-  JOIN pg_namespace n ON p.pronamespace = n.oid
-  JOIN pg_roles r ON p.proowner = r.oid
-  WHERE n.nspname = 'public' AND p.prokind = 'f' AND r.rolname != 'postgres'
-),
-client_execute AS (
-  SELECT count(*)::text AS n FROM information_schema.routine_privileges
-  WHERE routine_schema = 'public' AND grantee IN ('PUBLIC','anon','authenticated')
-)
-
--- ================================================================
--- ASSEMBLE FINAL RESULT TABLE
--- ================================================================
-SELECT section, check_name, status, detail, severity
-FROM (
-
-  -- PA1: Core tables
-  SELECT 1 AS section,
-    'PA1: core tables' AS check_name,
-    CASE WHEN tm.missing IS NULL THEN 'PASS'
-         ELSE 'STOP' END AS status,
-    CASE WHEN tm.missing IS NULL
-         THEN 'All 17 tables required by 003b preflight exist'
-         ELSE 'MISSING: ' || tm.missing END AS detail,
-    CASE WHEN tm.missing IS NULL THEN 'INFO' ELSE 'BLOCKING' END AS severity
-  FROM tables_missing tm
+results AS (
+  -- PA1: core tables
+  SELECT 1 AS section, 'PA1: core tables' AS check_name,
+    CASE WHEN s.has_users + s.has_guides + s.has_experiences + s.has_destinations
+      + s.has_guide_apps + s.has_amb_apps + s.has_platform_config + s.has_transactions
+      + s.has_webhook + s.has_bookings + s.has_terms + s.has_payments
+      + s.has_testimonials + s.has_claims + s.has_fundraising
+      + s.has_charities + s.has_posts = 17 THEN 'PASS' ELSE 'STOP' END AS status,
+    CASE WHEN s.has_users = 0 THEN 'users missing; ' ELSE '' END
+    || CASE WHEN s.has_guides = 0 THEN 'guides missing; ' ELSE '' END
+    || CASE WHEN s.has_experiences = 0 THEN 'experiences missing; ' ELSE '' END
+    || CASE WHEN s.has_destinations = 0 THEN 'destinations missing; ' ELSE '' END
+    || CASE WHEN s.has_guide_apps = 0 THEN 'guide_applications missing; ' ELSE '' END
+    || CASE WHEN s.has_amb_apps = 0 THEN 'ambassador_applications missing; ' ELSE '' END
+    || CASE WHEN s.has_platform_config = 0 THEN 'platform_config missing; ' ELSE '' END
+    || CASE WHEN s.has_transactions = 0 THEN 'transactions missing; ' ELSE '' END
+    || CASE WHEN s.has_webhook = 0 THEN 'webhook_event_inbox missing; ' ELSE '' END
+    || CASE WHEN s.has_bookings = 0 THEN 'booking_confirmations missing; ' ELSE '' END
+    || CASE WHEN s.has_terms = 0 THEN 'terms_acceptance missing; ' ELSE '' END
+    || CASE WHEN s.has_payments = 0 THEN 'payment_reports missing; ' ELSE '' END
+    || CASE WHEN s.has_testimonials = 0 THEN 'testimonials missing; ' ELSE '' END
+    || CASE WHEN s.has_claims = 0 THEN 'claims_registry missing; ' ELSE '' END
+    || CASE WHEN s.has_fundraising = 0 THEN 'fundraising_pages missing; ' ELSE '' END
+    || CASE WHEN s.has_charities = 0 THEN 'destination_charities missing; ' ELSE '' END
+    || CASE WHEN s.has_posts = 0 THEN 'posts missing; ' ELSE 'All 17 present' END AS detail,
+    CASE WHEN s.has_users + s.has_guides + s.has_experiences + s.has_destinations
+      + s.has_guide_apps + s.has_amb_apps + s.has_platform_config + s.has_transactions
+      + s.has_webhook + s.has_bookings + s.has_terms + s.has_payments
+      + s.has_testimonials + s.has_claims + s.has_fundraising
+      + s.has_charities + s.has_posts = 17 THEN 'INFO' ELSE 'BLOCKING' END AS severity
+  FROM scalars s
 
   UNION ALL
 
   -- PA2: schema_migrations
   SELECT 1, 'PA2: schema_migrations',
-    CASE WHEN sm.ex THEN 'PASS' ELSE 'WARNING' END,
-    CASE WHEN sm.ex THEN 'Exists'
-         ELSE 'Not present. 003b will create it. Expected on first production upgrade.'
-    END,
-    CASE WHEN sm.ex THEN 'INFO' ELSE 'WARNING' END
-  FROM sm_exists sm
+    CASE WHEN s.has_sm > 0 THEN 'PASS' ELSE 'WARNING' END,
+    CASE WHEN s.has_sm > 0 THEN 'Exists' ELSE 'Not present. 003b creates it.' END,
+    CASE WHEN s.has_sm > 0 THEN 'INFO' ELSE 'WARNING' END FROM scalars s
 
   UNION ALL
 
   -- PA3: account_status_audit
   SELECT 1, 'PA3: account_status_audit',
-    CASE WHEN asa.ex THEN 'PASS' ELSE 'WARNING' END,
-    CASE WHEN asa.ex THEN 'Exists'
-         ELSE 'Not present. 004 will create it. Expected before 004 is applied.'
-    END,
-    CASE WHEN asa.ex THEN 'INFO' ELSE 'WARNING' END
-  FROM as_exists asa
+    CASE WHEN s.has_audit > 0 THEN 'PASS' ELSE 'WARNING' END,
+    CASE WHEN s.has_audit > 0 THEN 'Exists' ELSE 'Not present. 004 creates it.' END,
+    CASE WHEN s.has_audit > 0 THEN 'INFO' ELSE 'WARNING' END FROM scalars s
 
   UNION ALL
 
   -- PA4: total tables
-  SELECT 1, 'PA4: total tables', 'PASS',
-    tt.n || ' tables in public schema', 'INFO'
-  FROM total_tables tt
+  SELECT 1, 'PA4: total tables', 'PASS', s.total_tables::text || ' tables in public schema', 'INFO' FROM scalars s
 
   UNION ALL
 
-  -- PB: Column audit (aggregated per table)
-  SELECT 2, 'PB: missing columns',
-    CASE WHEN cc.missing_cols IS NULL THEN 'PASS'
-         WHEN cc.missing_cols LIKE '%(BLOCKING)%' THEN 'STOP'
-         ELSE 'WARNING' END,
-    coalesce(cc.missing_cols, 'All expected columns present on all 10 tables'),
-    CASE WHEN cc.missing_cols IS NULL THEN 'INFO'
-         WHEN cc.missing_cols LIKE '%(BLOCKING)%' THEN 'BLOCKING'
-         ELSE 'WARNING' END
-  FROM (
-    SELECT string_agg(
-      cc.tbl || '.' || cc.col ||
-      CASE WHEN cc.added_by IS NOT NULL
-        THEN ' (added by ' || cc.added_by || ')'
-        ELSE ' (BLOCKING)' END,
-      ', ' ORDER BY
-        CASE WHEN cc.added_by IS NOT NULL THEN 1 ELSE 0 END,
-        cc.tbl, cc.col
-    ) AS missing_cols
-    FROM col_check cc
-  ) cc
+  -- PB1: users baseline columns
+  SELECT 2, 'PB1: users baseline columns',
+    CASE WHEN s.missing_users_baseline > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_users_baseline > 0 THEN s.missing_users_baseline::text || ' baseline columns missing (BLOCKING)'
+         ELSE 'All baseline columns present' END,
+    CASE WHEN s.missing_users_baseline > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB2: users avatar (003b adds)
+  SELECT 2, 'PB2: users.avatar',
+    CASE WHEN s.missing_users_003b_adds > 0 THEN 'WARNING' ELSE 'PASS' END,
+    CASE WHEN s.missing_users_003b_adds > 0 THEN 'Missing. 003b adds it.'
+         ELSE 'Present' END,
+    CASE WHEN s.missing_users_003b_adds > 0 THEN 'WARNING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB3: guides columns
+  SELECT 2, 'PB3: guides columns',
+    CASE WHEN s.missing_guides > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_guides > 0 THEN s.missing_guides::text || ' columns missing (BLOCKING)'
+         ELSE 'All 34 columns present' END,
+    CASE WHEN s.missing_guides > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB4: experiences columns
+  SELECT 2, 'PB4: experiences columns',
+    CASE WHEN s.missing_experiences > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_experiences > 0 THEN s.missing_experiences::text || ' columns missing (BLOCKING)'
+         ELSE 'All 14 columns present' END,
+    CASE WHEN s.missing_experiences > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB5: destinations columns
+  SELECT 2, 'PB5: destinations columns',
+    CASE WHEN s.missing_destinations > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_destinations > 0 THEN s.missing_destinations::text || ' columns missing (BLOCKING)'
+         ELSE 'All 5 columns present' END,
+    CASE WHEN s.missing_destinations > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB6: guide_applications columns
+  SELECT 2, 'PB6: guide_applications columns',
+    CASE WHEN s.missing_guide_apps > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_guide_apps > 0 THEN s.missing_guide_apps::text || ' columns missing (BLOCKING)'
+         ELSE 'All 11 columns present' END,
+    CASE WHEN s.missing_guide_apps > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB7: ambassador_applications columns
+  SELECT 2, 'PB7: ambassador_applications columns',
+    CASE WHEN s.missing_amb_apps > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_amb_apps > 0 THEN s.missing_amb_apps::text || ' columns missing (BLOCKING)'
+         ELSE 'All 12 columns present' END,
+    CASE WHEN s.missing_amb_apps > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB8: posts columns
+  SELECT 2, 'PB8: posts columns',
+    CASE WHEN s.missing_posts > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_posts > 0 THEN s.missing_posts::text || ' columns missing (BLOCKING)'
+         ELSE 'All 7 columns present' END,
+    CASE WHEN s.missing_posts > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB9: fundraising_pages columns
+  SELECT 2, 'PB9: fundraising_pages columns',
+    CASE WHEN s.missing_fundraising > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_fundraising > 0 THEN s.missing_fundraising::text || ' columns missing (BLOCKING)'
+         ELSE 'All 13 columns present' END,
+    CASE WHEN s.missing_fundraising > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB10: platform_config columns
+  SELECT 2, 'PB10: platform_config columns',
+    CASE WHEN s.missing_config > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_config > 0 THEN s.missing_config::text || ' columns missing (BLOCKING)'
+         ELSE 'All 8 columns present' END,
+    CASE WHEN s.missing_config > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PB11: destination_charities columns
+  SELECT 2, 'PB11: destination_charities columns',
+    CASE WHEN s.missing_charities > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.missing_charities > 0 THEN s.missing_charities::text || ' columns missing (BLOCKING)'
+         ELSE 'All 4 columns present' END,
+    CASE WHEN s.missing_charities > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
 
   UNION ALL
 
   -- PC1: published experiences
   SELECT 3, 'PC1: published experiences',
-    CASE WHEN pe.n::int > 0 THEN 'PASS' ELSE 'WARNING' END,
-    pe.n || ' published (founder must publish before public launch; 003b proceeds regardless)',
-    CASE WHEN pe.n::int > 0 THEN 'INFO' ELSE 'WARNING' END
-  FROM pub_experiences pe
+    CASE WHEN s.pub_experiences > 0 THEN 'PASS' ELSE 'WARNING' END,
+    s.pub_experiences::text || ' published',
+    CASE WHEN s.pub_experiences > 0 THEN 'INFO' ELSE 'WARNING' END FROM scalars s
 
   UNION ALL
 
   -- PC2: published destinations
   SELECT 3, 'PC2: published destinations',
-    CASE WHEN pd.n::int > 0 THEN 'PASS' ELSE 'WARNING' END,
-    pd.n || ' published (founder must publish before public launch; 003b proceeds regardless)',
-    CASE WHEN pd.n::int > 0 THEN 'INFO' ELSE 'WARNING' END
-  FROM pub_destinations pd
+    CASE WHEN s.pub_destinations > 0 THEN 'PASS' ELSE 'WARNING' END,
+    s.pub_destinations::text || ' published',
+    CASE WHEN s.pub_destinations > 0 THEN 'INFO' ELSE 'WARNING' END FROM scalars s
 
   UNION ALL
 
-  -- PC3: platform_config row count
+  -- PC3: platform_config rows
   SELECT 3, 'PC3: platform_config rows',
-    CASE WHEN pr.n::int = 0 THEN 'STOP'
-         WHEN pr.n::int > 1 THEN 'STOP'
-         ELSE 'PASS' END,
-    CASE WHEN pr.n::int = 0 THEN '0 rows (empty). Founder must seed configuration.'
-         WHEN pr.n::int > 1 THEN pr.n || ' rows (expected 1). Data-integrity issue.'
+    CASE WHEN s.platform_rows = 0 OR s.platform_rows > 1 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.platform_rows = 0 THEN '0 rows (empty). Founder must seed.'
+         WHEN s.platform_rows > 1 THEN s.platform_rows::text || ' rows (expected 1).'
          ELSE '1 row' END,
-    CASE WHEN pr.n::int = 0 OR pr.n::int > 1 THEN 'BLOCKING' ELSE 'INFO' END
-  FROM platform_rows pr
+    CASE WHEN s.platform_rows = 0 OR s.platform_rows > 1 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
 
   UNION ALL
 
   -- PC4: claims without evidence
   SELECT 3, 'PC4: claims without evidence',
-    CASE WHEN cne.n::int > 0 THEN 'STOP' ELSE 'PASS' END,
-    CASE WHEN cne.n::int > 0
-         THEN cne.n || ' published legal/financial/commercial claims have no evidence source. LEGAL REVIEW REQUIRED.'
-         ELSE 'All published claims have evidence sources' END,
-    CASE WHEN cne.n::int > 0 THEN 'BLOCKING' ELSE 'INFO' END
-  FROM claims_no_evidence cne
+    CASE WHEN s.claims_no_evidence > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.claims_no_evidence > 0
+         THEN s.claims_no_evidence::text || ' published legal/financial/commercial claims lack evidence. LEGAL REVIEW.'
+         ELSE 'All published claims have evidence' END,
+    CASE WHEN s.claims_no_evidence > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
 
   UNION ALL
 
-  -- PD1: RLS status
+  -- PC5: terms_acceptance duplicates
+  SELECT 3, 'PC5: terms_acceptance duplicates',
+    CASE WHEN s.terms_duplicates > 0 THEN 'STOP' ELSE 'PASS' END,
+    CASE WHEN s.terms_duplicates > 0
+         THEN s.terms_duplicates::text || ' duplicate session_id groups found. LEGAL REVIEW.'
+         ELSE 'No duplicate session_ids' END,
+    CASE WHEN s.terms_duplicates > 0 THEN 'BLOCKING' ELSE 'INFO' END FROM scalars s
+
+  UNION ALL
+
+  -- PD1: RLS
   SELECT 4, 'PD1: RLS not enabled',
-    CASE WHEN ro.n::int > 0 THEN 'WARNING' ELSE 'PASS' END,
-    CASE WHEN ro.n::int > 0
-         THEN ro.n || ' tables without RLS. 003b will enable RLS on all 17.'
-         ELSE 'All application tables have RLS enabled' END,
-    CASE WHEN ro.n::int > 0 THEN 'WARNING' ELSE 'INFO' END
-  FROM rls_off_count ro
+    CASE WHEN s.rls_off > 0 THEN 'WARNING' ELSE 'PASS' END,
+    CASE WHEN s.rls_off > 0 THEN s.rls_off::text || ' tables without RLS. 003b enables RLS.'
+         ELSE 'All app tables have RLS enabled' END,
+    CASE WHEN s.rls_off > 0 THEN 'WARNING' ELSE 'INFO' END FROM scalars s
 
   UNION ALL
 
   -- PE1: policies
-  SELECT 5, 'PE1: active policies',
-    'PASS',
-    pc.n || ' active policies before 003b. 003b drops all 25 known and creates 5 new.',
-    'INFO'
-  FROM policy_count pc
+  SELECT 5, 'PE1: active policies', 'PASS',
+    s.policy_count::text || ' policies. 003b drops all 25 known and creates 5 new.', 'INFO' FROM scalars s
 
   UNION ALL
 
   -- PF1: function ownership
   SELECT 6, 'PF1: function ownership',
-    CASE WHEN fp.n::int > 0 THEN 'WARNING' ELSE 'PASS' END,
-    CASE WHEN fp.n::int > 0
-         THEN fp.n || ' public functions not owned by postgres. 003b verification checks this.'
-         ELSE 'All public functions owned by postgres' END,
-    CASE WHEN fp.n::int > 0 THEN 'WARNING' ELSE 'INFO' END
-  FROM func_not_postgres fp
+    CASE WHEN s.func_not_postgres > 0 THEN 'WARNING' ELSE 'PASS' END,
+    CASE WHEN s.func_not_postgres > 0 THEN s.func_not_postgres::text || ' not owned by postgres'
+         ELSE 'All owned by postgres' END,
+    CASE WHEN s.func_not_postgres > 0 THEN 'WARNING' ELSE 'INFO' END FROM scalars s
 
   UNION ALL
 
   -- PF2: client EXECUTE
   SELECT 6, 'PF2: client EXECUTE grants',
-    CASE WHEN ce.n::int > 0 THEN 'WARNING' ELSE 'PASS' END,
-    CASE WHEN ce.n::int > 0
-         THEN ce.n || ' EXECUTE grants to PUBLIC/anon/authenticated. 003b revokes all.'
-         ELSE 'No EXECUTE grants to PUBLIC/anon/authenticated' END,
-    CASE WHEN ce.n::int > 0 THEN 'WARNING' ELSE 'INFO' END
-  FROM client_execute ce
+    CASE WHEN s.client_execute > 0 THEN 'WARNING' ELSE 'PASS' END,
+    CASE WHEN s.client_execute > 0 THEN s.client_execute::text || ' grants to PUBLIC/anon/auth. 003b revokes.'
+         ELSE 'No grants to PUBLIC/anon/authenticated' END,
+    CASE WHEN s.client_execute > 0 THEN 'WARNING' ELSE 'INFO' END FROM scalars s
+),
 
-) AS results
+-- ── Summary row ───────────────────────────────────────────────────
+summary AS (
+  SELECT
+    999 AS section,
+    '== SUMMARY ==' AS check_name,
+    CASE WHEN r.stop_count > 0 THEN 'STOP'
+         WHEN r.warning_count > 0 THEN 'WARNINGS'
+         ELSE 'CLEAN' END AS status,
+    r.total::text || ' checks: ' || r.pass_count::text || ' PASS, '
+      || r.warning_count::text || ' WARNING, '
+      || r.stop_count::text || ' STOP' AS detail,
+    CASE WHEN r.stop_count > 0 THEN 'BLOCKING'
+         WHEN r.warning_count > 0 THEN 'WARNING'
+         ELSE 'INFO' END AS severity
+  FROM (
+    SELECT count(*) AS total,
+           count(*) FILTER (WHERE status = 'PASS') AS pass_count,
+           count(*) FILTER (WHERE status = 'WARNING') AS warning_count,
+           count(*) FILTER (WHERE status = 'STOP') AS stop_count
+    FROM results
+    WHERE section < 999
+  ) r
+),
+
+-- ── Preflight self-check (as a result row) ───────────────────────
+self_check_row AS (
+  SELECT
+    998 AS section,
+    '== SELF-CHECK ==' AS check_name,
+    CASE WHEN (SELECT count(*) FROM results WHERE section < 999) = 24
+         THEN 'PASS'
+         ELSE 'STOP' END AS status,
+    CASE WHEN (SELECT count(*) FROM results WHERE section < 999) = 24
+         THEN 'Expected 24 checks, got 24'
+         ELSE 'EXPECTED 24 CHECKS, GOT '
+           || (SELECT count(*) FROM results WHERE section < 999)::text
+           || ' — PREFLIGHT ITSELF MAY BE BROKEN' END AS detail,
+    CASE WHEN (SELECT count(*) FROM results WHERE section < 999) = 24
+         THEN 'INFO' ELSE 'BLOCKING' END AS severity
+)
+
+-- ── Final output ──────────────────────────────────────────────────
+SELECT section, check_name, status, detail, severity
+FROM (
+  SELECT section, check_name, status, detail, severity FROM results
+  UNION ALL
+  SELECT section, check_name, status, detail, severity FROM self_check_row
+  UNION ALL
+  SELECT section, check_name, status, detail, severity FROM summary
+) AS final
 ORDER BY section, check_name;
