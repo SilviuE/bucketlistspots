@@ -10,10 +10,10 @@ app.use(express.json());
 // Load the Netlify function handler
 // Local dev fallback: ensure service role key exists
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  console.error('ERROR: SUPABASE_SERVICE_ROLE_KEY is not set.');
-  console.error('Create a .env file with SUPABASE_SERVICE_ROLE_KEY or set it in your environment.');
-  console.error('The local dev server requires service-role access for API functions.');
-  process.exit(1);
+  throw new Error(
+    'SUPABASE_SERVICE_ROLE_KEY is required for the local API proxy. ' +
+    'Set it in the local environment before starting server.cjs.'
+  );
 }
 const apiHandler = require('./netlify/functions/api.cjs').handler;
 
