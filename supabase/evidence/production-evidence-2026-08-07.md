@@ -15,8 +15,8 @@
 | P3 | supabase/migrations/P3_publication_columns.sql | APPLIED manual-equivalent + VERIFIED |
 | P4 | supabase/migrations/P4_guides_columns.sql | EXECUTED + VERIFIED |
 | P5 | supabase/migrations/P5_policy_reconciliation.sql | EXECUTED + VERIFIED |
-| 1 | supabase/migrations/003b_rls_privilege_hardening.sql | EXECUTED + VERIFIED |
-| 2 | supabase/migrations/004_account_suspension.sql | EXECUTED + VERIFIED |
+| 003b | supabase/migrations/003b_rls_privilege_hardening.sql | EXECUTED + VERIFIED |
+| 004 | supabase/migrations/004_account_suspension.sql | EXECUTED + VERIFIED |
 
 ## Post-Migration Verification
 
