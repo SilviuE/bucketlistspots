@@ -47,9 +47,10 @@ END $$;
 
 -- Verification
 DO $$
-DECLARE _dtype TEXT;
+DECLARE _dtype TEXT; _nullable TEXT; _default TEXT;
 BEGIN
-  SELECT data_type INTO _dtype
+  SELECT data_type, is_nullable, column_default
+  INTO _dtype, _nullable, _default
   FROM information_schema.columns
   WHERE table_schema = 'public' AND table_name = 'guides'
     AND column_name = 'agency_price';
@@ -62,7 +63,15 @@ BEGIN
     RAISE EXCEPTION '005 VERIFY FAILED: guides.agency_price has type % (expected numeric).', _dtype;
   END IF;
 
-  RAISE NOTICE '005 VERIFIED: guides.agency_price (%s, nullable) exists.', _dtype;
+  IF _nullable != 'YES' THEN
+    RAISE EXCEPTION '005 VERIFY FAILED: guides.agency_price is NOT NULL (expected nullable).';
+  END IF;
+
+  IF _default IS NOT NULL THEN
+    RAISE WARNING '005: guides.agency_price has a non-NULL default (%), which differs from the canonical NULL default.', _default;
+  END IF;
+
+  RAISE NOTICE '005 VERIFIED: guides.agency_price (%, nullable) exists.', coalesce(_dtype,'?');
 END $$;
 
 COMMIT;

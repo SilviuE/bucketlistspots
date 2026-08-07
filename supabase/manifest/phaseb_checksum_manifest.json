@@ -45,7 +45,7 @@
     },
     {
       "path": "supabase/migrations/005_guides_agency_price.sql",
-      "sha256": "31BC051DC4A178C2B47BA656523121F2B8B9DFF0D6EA860BC06B2764BF8C9EFE",
+      "sha256": "92DF4D8B4DB9BF33A74D717C87B8296B0E13473DFD1D8AD24408E5FB18D79830",
       "bytes": 1874,
       "role": "additive — agency_price INTEGER on guides (idempotent)"
     },
@@ -123,6 +123,7 @@
     }
   ]
 }
+
 
 
 
