@@ -26,6 +26,18 @@
       "role": "production prerequisite P2 — terms acceptance table + immutable trigger"
     },
     {
+      "path": "supabase/migrations/P3_publication_columns.sql",
+      "sha256": "AC5AE11BA0CFC167F4CB64CCB79327222B950DD04C1D42D2D82985AA0C2B4DF7",
+      "bytes": 1748,
+      "role": "production prerequisite P3 — is_published on experiences and destinations"
+    },
+    {
+      "path": "supabase/migrations/P4_guides_columns.sql",
+      "sha256": "D2722BAC7BD01A5E5C1EA80ACB641CA9BA5EFCE98D844724231A901D6B46C591",
+      "bytes": 1534,
+      "role": "production prerequisite P4 — email and tagline on guides"
+    },
+    {
       "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
       "sha256": "05812DDA5931D8D486E27537F8354AC36F0035235C76DD2031D3284843D69FDB",
       "bytes": 47756,
