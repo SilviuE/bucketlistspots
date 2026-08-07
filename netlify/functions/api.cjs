@@ -1460,15 +1460,23 @@ async function handlePublicTestimonials(event) {
       .eq('is_published', true);
 
     if (page) {
-      try {
-        query = query.or(`page.eq.${page},page.is.null`);
-      } catch (e) {
-        // page column may not exist on older schema versions — skip filter
-      }
+      try { query = query.or(`page.eq.${page},page.is.null`); } catch (_) { /* column absent — skip filter */ }
     }
     query = query.order('is_featured', { ascending: false }).order('date_given', { ascending: false }).limit(10);
 
-    const { data, error } = await query;
+    let { data, error } = await query;
+
+    // If the page column does not exist (42703 — undefined_column), retry without it
+    if (error && error.code === '42703' && page) {
+      query = sr.from('testimonials')
+        .select('id, person_name, display_name, role, relationship_to_bls, country, destination, testimonial_text, date_given, photo_url, is_featured')
+        .eq('consent_status', 'granted')
+        .eq('approval_status', 'approved')
+        .eq('is_published', true)
+        .order('is_featured', { ascending: false }).order('date_given', { ascending: false }).limit(10);
+      ({ data, error } = await query);
+    }
+
     if (error) return json({ error: error.message }, 500);
 
     return json({ testimonials: data || [] });
