@@ -62,7 +62,6 @@ foreach ($f in $manifest.files) {
 $allowlist = @(
   "supabase/migrations/001_landing_page_infrastructure.sql",
   "supabase/migrations/002_webhook_infrastructure.sql",
-  "supabase/migrations/002_webhook_infrastructure_upgrade.sql",
   "supabase/migrations/002a_terms_acceptance_upgrade.sql",
   "supabase/migrations/003_backfill_experiences_destinations.sql",
   "supabase/migrations/003a_publication_columns.sql",
@@ -76,7 +75,6 @@ $allowlist = @(
   "supabase/migrations/platform_config_expansion.sql",
   "supabase/migrations/posts_public_select.sql",
   "supabase/migrations/referral_program.sql",
-  "supabase/migrations/terms_acceptance.sql",
   "supabase/migrations/terms_acceptance_upgrade.sql",
   "supabase/migrations/testimonials.sql"
 )
