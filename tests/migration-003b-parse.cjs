@@ -53,11 +53,21 @@ function check(label, ok, detail) {
   console.log('2. No bare RAISE statements outside DO blocks:');
   const lines = sql.split(/\r?\n/);
   let inDollar = false;
+  let dollarName = '';
   let bareRaises = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/^\s*DO\s*\$\$/.test(line) || /^\s*DO\s*\$block\$/.test(line)) { inDollar = true; continue; }
-    if (inDollar && /\$\$\s*;$/.test(line)) { inDollar = false; continue; }
+    // Match any DO block with named or anonymous dollar quotes
+    // e.g. DO $$, DO $struct$, DO $guard$, DO $adv_supa_admin$
+    const doMatch = line.match(/^\s*DO\s*\$([a-zA-Z_]*)\$/);
+    if (doMatch) { inDollar = true; dollarName = doMatch[1]; continue; }
+    // Match end of named dollar-quoted block: END $name$;
+    if (inDollar && dollarName) {
+      const endMatch = line.match(new RegExp('\\$' + dollarName + '\\$\\s*;$'));
+      if (endMatch) { inDollar = false; dollarName = ''; continue; }
+    }
+    // Match end of anonymous dollar-quoted block: $$;
+    if (inDollar && !dollarName && /\$\$\s*;$/.test(line)) { inDollar = false; continue; }
     if (!inDollar && /^\s*RAISE\s/i.test(line)) bareRaises.push((i + 1) + ': ' + line.trim());
   }
   check('No bare RAISE statements', bareRaises.length === 0, bareRaises.join(' | '));
