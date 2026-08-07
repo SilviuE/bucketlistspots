@@ -1,0 +1,105 @@
+﻿# Phase B Disposable Database Execution Transcript
+# ================================================================
+# Date    : 2026-08-06T20:55:00+01:00
+# Command : psql -U [REDACTED] -d bls_phaseb_test -f supabase/test/phaseb_test_harness.sql
+# PG Ver  : PostgreSQL 16.14, compiled by Visual C++ build 1944, 64-bit
+# DB      : bls_phaseb_test (disposable, destroyed after run)
+# Exit    : 0 (PASS)
+# ================================================================
+
+=== 003b STRUCTURAL VALIDATION (first run) ===
+schema_migrations structure validated: 4 columns, no runtime-role grants.
+
+=== 003b VERIFICATION (first run) ===
+VERIFICATION: ALL CHECKS PASSED
+
+=== 004 STRUCTURAL VALIDATION (first run) ===
+schema_migrations structure validated: 4 columns, no runtime-role grants.
+
+=== 004 VERIFICATION (first run) ===
+VERIFICATION 004: ALL CHECKS PASSED
+
+=== IDEMPOTENCY RE-RUN ===
+0000: Migration 0000 already applied - exiting cleanly.
+003b: Migration 003b already applied - exiting cleanly.
+003b structural re-validation: schema_migrations structure validated: 4 columns, no runtime-role grants.
+003b re-verification: VERIFICATION: ALL CHECKS PASSED
+004: Migration 004 already applied - exiting cleanly.
+004 structural re-validation: schema_migrations structure validated: 4 columns, no runtime-role grants.
+004 re-verification: VERIFICATION 004: ALL CHECKS PASSED
+
+=== CHECKSUM TESTS (T1-T3) ===
+T1 PASS: ON CONFLICT DO NOTHING prevents silent overwrite.
+T2 PASS: checksum mismatch correctly detected (stored != tampered).
+T3 PASS: clean skip - stored checksum matches expected.
+
+=== STAGING SEED IDEMPOTENCY (4b-1/2/3) ===
+PASS: 4b-1 - seed idempotent: row counts unchanged on all 8 tables.
+PASS: 4b-2 - existing row guide-staging-pub not overwritten (ON CONFLICT DO NOTHING).
+PASS: 4b-3 - destination Kilimanjaro still 1 row after seed re-run.
+
+=== APPLICATION REST-QUERY TESTS (7a-7o) ===
+PASS: 7a  - anon can SELECT published guides (2 rows)
+PASS: 7b  - anon can SELECT published experiences via RLS (3 rows)
+PASS: 7c  - anon can SELECT published destinations via RLS (3 rows)
+PASS: 7d  - anon sees 0 users (RLS deny)
+PASS: 7e  - anon blocked from guide_applications
+PASS: 7f  - anon blocked from account_status_audit
+PASS: 7g  - anon blocked from platform_config
+PASS: 7h  - authenticated sees own user row (1 row)
+PASS: 7i  - authenticated blocked from role UPDATE
+PASS: 7j  - authenticated blocked from guide_applications
+PASS: 7k  - service_role can INSERT webhook_event_inbox (1 rows)
+PASS: 7l  - service_role can SELECT platform_config (1 row)
+PASS: 7m  - service_role can SELECT account_status_audit (0 rows)
+PASS: 7n  - anon blocked from users UPDATE
+PASS: 7o  - anon blocked from guides INSERT
+Result: 15/15 PASS
+
+=== SECURITY DEFINER FUNCTION VERIFICATION (8a-8f) ===
+PASS: 8a  - All 4 SECDEF functions: search_path = ''
+PASS: 8b  - Trigger functions: no EXECUTE for any role.
+PASS: 8c  - claim_webhook_event: EXECUTE -> service_role
+PASS: 8c  - credit_ambassador_commission: EXECUTE -> service_role
+PASS: 8c  - credit_referral_reward: EXECUTE -> service_role
+PASS: 8d  - credit_referral_reward: all table refs schema-qualified (public.)
+PASS: 8e  - schema_migrations: no grants to anon, authenticated, or PUBLIC.
+PASS: 8f  - account_status_audit: service_role SELECT only (trigger-written).
+Result: 6/6 PASS
+
+=== FINAL INVENTORY ===
+Tables:       19 total (18 app + schema_migrations)
+RLS enabled:  18/18 application tables
+Policies:     5 hardened (guides_select_published, experiences_select_published,
+              destinations_select_published, users_select_own,
+              users_update_own_name_avatar)
+Policy-bearing tables: 4 (users, guides, experiences, destinations)
+Zero-policy tables:    14
+Schema_migrations grants: postgres only (service_role/anonymous/auth/PUBLIC revoked)
+
+PHASE B HARNESS: EXECUTION COMPLETE (exit 0)
+
+================================================================
+PRODUCTION MIGRATION CHAIN — COMPLETED 2026-08-07
+================================================================
+Target  : nmyhytrnzfhdstqazttb (production)
+Commit  : c409bac (review/terms-sections-6-7)
+
+P1 002_webhook_infrastructure_upgrade.sql  — EXECUTED + VERIFIED
+P2 terms_acceptance.sql                     — EXECUTED + VERIFIED
+P3 P3_publication_columns.sql               — APPLIED manual-equivalent + VERIFIED
+P4 P4_guides_columns.sql                    — EXECUTED + VERIFIED
+P5 P5_policy_reconciliation.sql             — EXECUTED + VERIFIED
+1  003b_rls_privilege_hardening.sql         — EXECUTED + VERIFIED
+2  004_account_suspension.sql               — EXECUTED + VERIFIED
+—  production_verification.sql              — Sections 1-11 PASS, zero FAIL
+
+Note: First verification attempt used Supabase RLS test mode
+(_vr does not exist). Rerun normally — all checks passed.
+This was a verification-mode issue, not a migration failure.
+
+Production backup: 2026-08-07 01:08 UTC physical backup
+Staging: tqooyiyqsidbemzlcsfp — migrations applied separately
+Main branch: untouched
+Terms: DRAFT
+Stripe/JustGiving/live launch: disabled

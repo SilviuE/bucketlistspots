@@ -1,0 +1,19 @@
+# Phase B protected text files: always checkout with LF line endings.
+# This ensures SHA-256 verification is independent of the user's
+# core.autocrlf setting. The canonical content in Git is LF; these
+# rules prevent CRLF conversion on checkout.
+
+# SQL migrations, seeds, preflight, tests
+*.sql         text eol=lf
+
+# PowerShell verification scripts
+*.ps1         text eol=lf
+
+# JSON manifests
+*.json        text eol=lf
+
+# Markdown documentation and runbooks
+*.md          text eol=lf
+
+# Plain-text evidence transcripts
+*.txt         text eol=lf

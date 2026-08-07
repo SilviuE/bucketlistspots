@@ -10,7 +10,10 @@ app.use(express.json());
 // Load the Netlify function handler
 // Local dev fallback: ensure service role key exists
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+  throw new Error(
+    'SUPABASE_SERVICE_ROLE_KEY is required for the local API proxy. ' +
+    'Set it in the local environment before starting server.cjs.'
+  );
 }
 const apiHandler = require('./netlify/functions/api.cjs').handler;
 
@@ -47,8 +50,8 @@ app.all(/^\/api(\/.*)?$/, async (req, res) => {
 });
 
 if (require.main === module) {
-  app.listen(3002, () => {
-    console.log('Dev server running on http://localhost:3002');
+  app.listen(3002, '127.0.0.1', () => {
+    console.log('Dev server running on http://127.0.0.1:3002');
   });
 }
 

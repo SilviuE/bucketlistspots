@@ -1,0 +1,122 @@
+{
+  "commit": "41dcbd6eb548f0eec3b53a382fc2bcc7e38fa0c3",
+  "branch": "review/terms-sections-6-7",
+  "generated_at": "2026-08-06T22:55:00+01:00",
+  "generated_by": "verify_checksums.ps1 normalisation (CRLF->LF before SHA-256)",
+  "verification_script": "supabase/manifest/verify_checksums.ps1",
+  "canonical_method": "All SHA-256 values are computed on LF-normalised file content (\\r\\n replaced with \\n). This makes verification independent of core.autocrlf and platform line-ending conversion. The committed .gitattributes ensures checkout uses LF for *.sql, *.ps1, *.json, *.md, *.txt.",
+  "note": "This manifest records the full-file SHA-256 (LF-normalised) of every migration, seed, preflight, test, doc, runbook and evidence file in the authorised staging chain. It does NOT include the manifest JSON or verify_checksums.ps1 (tooling, self-referential). The embedded checksum constants inside migration files are database migration-history guards and are NOT independent file-verification hashes.",
+  "files": [
+    {
+      "path": "supabase/migrations/0000_core_schema.sql",
+      "sha256": "3E8A31316BB9CD90F3921427BE4295AA5071532AB3D925CA5125C406A3CD9F9A",
+      "bytes": 32999,
+      "role": "fresh-install baseline schema - never run on production"
+    },
+    {
+      "path": "supabase/migrations/002_webhook_infrastructure_upgrade.sql",
+      "sha256": "D79572D39F3EA946E97C9F89F9E23AF44B580DA120A9A33453052593DFF299EF",
+      "bytes": 12506,
+      "role": "production prerequisite P1 — webhook event inbox + booking confirmations"
+    },
+    {
+      "path": "supabase/migrations/terms_acceptance.sql",
+      "sha256": "C717186A6818D8FA8498F41095D02D72E0A93EC81978FFD4D4A2147109FA3CD7",
+      "bytes": 3334,
+      "role": "production prerequisite P2 — terms acceptance table + immutable trigger"
+    },
+    {
+      "path": "supabase/migrations/P3_publication_columns.sql",
+      "sha256": "AC5AE11BA0CFC167F4CB64CCB79327222B950DD04C1D42D2D82985AA0C2B4DF7",
+      "bytes": 1748,
+      "role": "production prerequisite P3 — is_published on experiences and destinations"
+    },
+    {
+      "path": "supabase/migrations/P4_guides_columns.sql",
+      "sha256": "D2722BAC7BD01A5E5C1EA80ACB641CA9BA5EFCE98D844724231A901D6B46C591",
+      "bytes": 1534,
+      "role": "production prerequisite P4 — email and tagline on guides"
+    },
+    {
+      "path": "supabase/migrations/P5_policy_reconciliation.sql",
+      "sha256": "1245215EFCE9556FAD4F0B5A83C1D0B60C050CFA46D0ACCCA479985B5D7654DC",
+      "bytes": 7061,
+      "role": "production prerequisite P5 — drop 12 legacy policies before 003b"
+    },
+    {
+      "path": "supabase/migrations/003b_rls_privilege_hardening.sql",
+      "sha256": "05812DDA5931D8D486E27537F8354AC36F0035235C76DD2031D3284843D69FDB",
+      "bytes": 47756,
+      "role": "RLS privilege hardening - fresh and upgrade paths"
+    },
+    {
+      "path": "supabase/migrations/004_account_suspension.sql",
+      "sha256": "CBC1BA8F6EFB17A0DC5C62FD06E558056394A7D56589588949026B1D25CCCC2E",
+      "bytes": 22066,
+      "role": "account suspension + trigger-written audit trail"
+    },
+    {
+      "path": "supabase/seed/staging_seed.sql",
+      "sha256": "13AB6FB1DFE9293D1108309FBCC2394BE56D1E87487AE5256FD4AEC2F4DA9AF5",
+      "bytes": 7454,
+      "role": "staging-only test data seed"
+    },
+    {
+      "path": "supabase/preflight/production_preflight.sql",
+      "sha256": "74D92ADC0F6B8BB3287963F34CDB932128D8E0E10CCF47C5BA01D6E014E505BA",
+      "bytes": 16760,
+      "role": "production read-only preflight/reconciliation"
+    },
+    {
+      "path": "supabase/test/phaseb_test_harness.sql",
+      "sha256": "57B3F13206AD85F396A5D686FD11E83434FB90047A8333B8A098EBD1565144B8",
+      "bytes": 38297,
+      "role": "disposable DB test harness (local psql only)"
+    },
+    {
+      "path": "supabase/test/staging_verification.sql",
+      "sha256": "C8D355B271DC559209E65F013BE7267DE234C5B71C2D281608FC00280AB97D3C",
+      "bytes": 18352,
+      "role": "staging-safe post-install verification (Supabase SQL Editor)"
+    },
+    {
+      "path": "supabase/test/production_verification.sql",
+      "sha256": "642606F1EC4A76E3700206EA7278C39146E68DB7A5FC6103C05FBB44B8C58156",
+      "bytes": 13335,
+      "role": "production post-upgrade verification (Supabase SQL Editor)"
+    },
+    {
+      "path": "supabase/docs/checksum_explanation.md",
+      "sha256": "3FD1E03EF72D182DB61E34DD22897CFBE216245F9E5CBC25DE200858F374B8C7",
+      "bytes": 3178,
+      "role": "embedded-vs-full-file checksum documentation"
+    },
+    {
+      "path": "supabase/runbooks/fresh_staging_installation.md",
+      "sha256": "DED0F661FD247D4D97DB07C110CF9947AB76CCFEDFE3C5799469E8C1CD949B39",
+      "bytes": 5531,
+      "role": "fresh staging installation runbook"
+    },
+    {
+      "path": "supabase/runbooks/production_upgrade.md",
+      "sha256": "4B89EE7FEC713F7DF3587B2BA44A806253010B8E5BABBD0422C4F3876D498734",
+      "bytes": 6695,
+      "role": "production upgrade runbook"
+    },
+    {
+      "path": "supabase/evidence/phaseb_execution_transcript.txt",
+      "sha256": "B52AADA25E88FCCBD011990D19AA8D95AA54021870AADED2F64B6BAE746A58CE",
+      "bytes": 3862,
+      "role": "redacted disposable DB execution transcript + production completion"
+    },
+    {
+      "path": "supabase/evidence/production-evidence-2026-08-07.md",
+      "sha256": "22964CD00340A411F0B86F2E09AC9DB8644E7173D289540AD1414809FFB7E319",
+      "bytes": 1799,
+      "role": "production migration evidence record — 2026-08-07"
+    }
+  ]
+}
+
+
+
