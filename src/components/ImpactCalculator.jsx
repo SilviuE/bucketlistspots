@@ -1,7 +1,7 @@
 import { Box, Typography, Paper } from '@mui/material';
 import SavingsIcon from '@mui/icons-material/Savings';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
-import { formatPrice, getStoredCurrency } from '../lib/currency';
+import { formatGuidePrice, getStoredCurrency } from '../lib/currency';
 
 export default function ImpactCalculator({ guidePrice, agencyPrice }) {
   const currency = getStoredCurrency();
@@ -19,7 +19,7 @@ export default function ImpactCalculator({ guidePrice, agencyPrice }) {
         <Box sx={{ flex: 1, textAlign: 'center', p: 1.5, bgcolor: '#FFFFFF', borderRadius: 2 }}>
           <SavingsIcon sx={{ color: '#2A9D8F', fontSize: 28 }} />
           <Typography variant="h3" fontWeight={800} sx={{ mt: 0.5 }}>
-            {formatPrice(guidePrice, currency)}
+            {formatGuidePrice(guidePrice, currency)}
           </Typography>
           {hasAgency && (
             <Typography variant="caption" fontWeight={600} color="text.secondary">

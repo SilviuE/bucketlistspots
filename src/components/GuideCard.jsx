@@ -7,7 +7,7 @@ import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import { useAuth } from '../context/AuthContext';
-import { formatPrice, getStoredCurrency } from '../lib/currency';
+import { formatPrice, formatGuidePrice, getStoredCurrency } from '../lib/currency';
 
 export default function GuideCard({ guide, variant = 'default' }) {
   const navigate = useNavigate();
@@ -89,11 +89,11 @@ export default function GuideCard({ guide, variant = 'default' }) {
         <Box>
           <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5 }}>
             <Typography variant="body1" fontWeight={800} color="text.primary">
-                {formatPrice(guide.price, currency)}
+                {formatGuidePrice(guide.price, currency)}
             </Typography>
             {guide.agencyPrice > 0 && (
               <Typography variant="caption" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
-                {formatPrice(guide.agencyPrice, currency)}
+                {formatGuidePrice(guide.agencyPrice, currency)}
               </Typography>
             )}
           </Box>

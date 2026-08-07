@@ -179,7 +179,7 @@ test('Zero fee → zero discount', () => {
 });
 
 // ─── NaN safety — formatPrice ─────────────────────────────────────
-const { formatPrice } = require('../src/lib/currency');
+const { formatPrice, formatGuidePrice } = require('../src/lib/currency');
 
 test('formatPrice: undefined returns empty string', () => {
   assert.strictEqual(formatPrice(undefined, 'usd'), '');
@@ -197,8 +197,28 @@ test('formatPrice: 0 is valid', () => {
   assert.strictEqual(formatPrice(0, 'usd'), '$0');
 });
 
-test('formatPrice: normal value still works', () => {
-  assert.strictEqual(formatPrice(2500, 'usd'), '$2,500');
+test('formatGuidePrice: null returns empty', () => {
+  assert.strictEqual(formatGuidePrice(null, 'usd'), '');
+});
+
+test('formatGuidePrice: NaN returns empty', () => {
+  assert.strictEqual(formatGuidePrice(NaN, 'usd'), '');
+});
+
+test('formatGuidePrice: integer USD', () => {
+  assert.strictEqual(formatGuidePrice(2500, 'usd'), '$2,500');
+});
+
+test('formatGuidePrice: decimal ceil USD', () => {
+  assert.strictEqual(formatGuidePrice(2499.99, 'usd'), '$2,500');
+});
+
+test('formatGuidePrice: GBP', () => {
+  assert.strictEqual(formatGuidePrice(1800, 'gbp'), '£1,800');
+});
+
+test('formatGuidePrice: EUR', () => {
+  assert.strictEqual(formatGuidePrice(1500, 'eur'), '€1,500');
 });
 
 // ─── Summary ───────────────────────────────────────────────────────

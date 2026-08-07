@@ -17,6 +17,15 @@ export function formatPrice(amountUSD, currency) {
   return `${converted.toLocaleString(locale)} ${code}`;
 }
 
+export function formatGuidePrice(amount, currency) {
+  if (amount == null || isNaN(amount)) return '';
+  const code = (currency || 'usd').toUpperCase();
+  const ceil = Math.ceil(Number(amount));
+  if (code === 'GBP') return `£${ceil.toLocaleString('en-US')}`;
+  if (code === 'EUR') return `€${ceil.toLocaleString('en-US')}`;
+  return `$${ceil.toLocaleString('en-US')}`;
+}
+
 export function stripeCurrency(currency) {
   return currency.toLowerCase();
 }
