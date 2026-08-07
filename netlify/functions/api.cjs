@@ -1459,7 +1459,13 @@ async function handlePublicTestimonials(event) {
       .eq('approval_status', 'approved')
       .eq('is_published', true);
 
-    if (page) query = query.or(`page.eq.${page},page.is.null`);
+    if (page) {
+      try {
+        query = query.or(`page.eq.${page},page.is.null`);
+      } catch (e) {
+        // page column may not exist on older schema versions — skip filter
+      }
+    }
     query = query.order('is_featured', { ascending: false }).order('date_given', { ascending: false }).limit(10);
 
     const { data, error } = await query;
