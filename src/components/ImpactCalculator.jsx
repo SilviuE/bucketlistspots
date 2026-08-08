@@ -8,8 +8,7 @@ export default function ImpactCalculator({ guidePrice, agencyPrice, priceCurrenc
   const hasAgency = agencyPrice > 0;
   const savings = hasAgency ? (agencyPrice - guidePrice) : null;
   const percentSavings = hasAgency ? Math.round((1 - guidePrice / agencyPrice) * 100) : null;
-  const localRetention = Math.round(guidePrice * 0.75);
-  const src = priceCurrency || 'usd';
+  const localRetention = guidePrice * 0.75;
 
   return (
     <Paper elevation={0} sx={{ p: 2, bgcolor: '#E9D8A6', borderRadius: 3, border: '1px solid rgba(16,42,67,0.08)' }}>
@@ -20,7 +19,7 @@ export default function ImpactCalculator({ guidePrice, agencyPrice, priceCurrenc
         <Box sx={{ flex: 1, textAlign: 'center', p: 1.5, bgcolor: '#FFFFFF', borderRadius: 2 }}>
           <SavingsIcon sx={{ color: '#2A9D8F', fontSize: 28 }} />
           <Typography variant="h3" fontWeight={800} sx={{ mt: 0.5 }}>
-            {formatGuidePrice(guidePrice, src, currency)}
+            {formatGuidePrice(guidePrice, priceCurrency, currency)}
           </Typography>
           {hasAgency && (
             <Typography variant="caption" fontWeight={600} color="text.secondary">
@@ -31,7 +30,7 @@ export default function ImpactCalculator({ guidePrice, agencyPrice, priceCurrenc
         <Box sx={{ flex: 1, textAlign: 'center', p: 1.5, bgcolor: '#FFFFFF', borderRadius: 2 }}>
           <AccountBalanceIcon sx={{ color: '#102A43', fontSize: 28 }} />
           <Typography variant="h3" fontWeight={800} sx={{ mt: 0.5 }}>
-            {formatGuidePrice(localRetention, src, currency)}
+            {formatGuidePrice(localRetention, priceCurrency, currency)}
           </Typography>
           <Typography variant="caption" fontWeight={600} color="text.secondary">
             Stays in local economy
@@ -40,7 +39,7 @@ export default function ImpactCalculator({ guidePrice, agencyPrice, priceCurrenc
       </Box>
       {hasAgency && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
-          By booking direct, an extra {formatGuidePrice(savings, src, currency)} stays with the guide's community vs. a standard agency.
+          By booking direct, an extra {formatGuidePrice(savings, priceCurrency, currency)} stays with the guide's community vs. a standard agency.
         </Typography>
       )}
     </Paper>

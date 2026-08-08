@@ -263,6 +263,14 @@ test('formatGuidePrice: unknown source returns empty', () => {
   assert.strictEqual(formatGuidePrice(100, 'xyz', 'usd'), '');
 });
 
+test('formatGuidePrice: null source returns empty', () => {
+  assert.strictEqual(formatGuidePrice(100, null, 'gbp'), '');
+});
+
+test('formatGuidePrice: undefined source returns empty', () => {
+  assert.strictEqual(formatGuidePrice(100, undefined, 'gbp'), '');
+});
+
 test('formatGuidePrice: unknown target returns empty', () => {
   assert.strictEqual(formatGuidePrice(100, 'usd', 'xyz'), '');
 });
