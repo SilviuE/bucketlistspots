@@ -7,6 +7,7 @@ export function convert(amountUSD, currency) {
 }
 
 export function formatPrice(amountUSD, currency) {
+  if (amountUSD == null || isNaN(amountUSD)) return '';
   const converted = convert(amountUSD, currency);
   const locale = locales[currency] || 'en-US';
   const code = currency.toUpperCase();
@@ -14,6 +15,15 @@ export function formatPrice(amountUSD, currency) {
   if (currency === 'gbp') return `£${converted.toLocaleString(locale)}`;
   if (currency === 'eur') return `€${converted.toLocaleString(locale)}`;
   return `${converted.toLocaleString(locale)} ${code}`;
+}
+
+export function formatGuidePrice(amount, currency) {
+  if (amount == null || isNaN(amount)) return '';
+  const code = (currency || 'usd').toUpperCase();
+  const ceil = Math.ceil(Number(amount));
+  if (code === 'GBP') return `£${ceil.toLocaleString('en-US')}`;
+  if (code === 'EUR') return `€${ceil.toLocaleString('en-US')}`;
+  return `$${ceil.toLocaleString('en-US')}`;
 }
 
 export function stripeCurrency(currency) {

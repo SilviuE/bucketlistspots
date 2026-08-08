@@ -8,7 +8,7 @@ const PUBLIC_GUIDE_COLUMNS = [
   'id', 'name', 'trading_name', 'status', 'photo', 'hero_image',
   'bio', 'why_independent', 'location', 'languages', 'experience',
   'certifications', 'promise', 'badge', 'tagline', 'routes',
-  'price', 'price_currency', 'featured', 'review_count', 'trips_led',
+  'price', 'agency_price', 'price_currency', 'featured', 'review_count', 'trips_led',
   'video_intro', 'tripadvisor_embed',
   'identity_verified', 'license_verified', 'safety_verified', 'fair_pay_verified',
   'created_at', 'updated_at',

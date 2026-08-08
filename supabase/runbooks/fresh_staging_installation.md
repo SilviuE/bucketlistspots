@@ -168,3 +168,5 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 - Fewer than 5 policies or more than 5 policies
 - Full-file SHA-256 verification returns non-zero exit code
 - Any doubt about which project the query ran on
+
+

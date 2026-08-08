@@ -54,6 +54,8 @@ Open SQL Editor on PRODUCTION. Paste ENTIRE `supabase/preflight/production_prefl
 |---|---|---|
 | 1 | `supabase/migrations/003b_rls_privilege_hardening.sql` | RLS hardening. Drops all 25 known policies (including 4 from P1+P2). Creates 5 hardened policies. Column grants, function EXECUTE lockdown, schema_migrations bootstrap. Supabase_admin defaults advisory. |
 | 2 | `supabase/migrations/004_account_suspension.sql` | Account suspension. `account_status` column on users. Trigger-written audit table. |
+| 3 | supabase/migrations/005_guides_agency_price.sql | Additive: gency_price NUMERIC(10,2) on guides if absent. Production no-op (column already exists). |
+| 4 | supabase/migrations/006_guides_agency_price_privileges.sql | Column-level SELECT on guides.agency_price for anon and authenticated. |
 
 ### Execution Order
 
@@ -62,6 +64,8 @@ P1: 002_webhook_infrastructure_upgrade.sql
 P2: terms_acceptance.sql
 1:  003b_rls_privilege_hardening.sql
 2:  004_account_suspension.sql
+| 3 | supabase/migrations/005_guides_agency_price.sql | Additive: gency_price NUMERIC(10,2) on guides if absent. Production no-op (column already exists). |
+| 4 | supabase/migrations/006_guides_agency_price_privileges.sql | Column-level SELECT on guides.agency_price for anon and authenticated. |
 ```
 
 ### Prerequisite Audit
@@ -132,3 +136,5 @@ pg_dump "postgresql://postgres:${plain}@db.nmyhytrnzfhdstqazttb.supabase.co:5432
 | PR merge to main | NOT authorised |
 | `0000_core_schema.sql` on production | NEVER |
 | Guide application write test | NOT authorised |
+
+
