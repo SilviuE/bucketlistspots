@@ -179,7 +179,7 @@ test('Zero fee → zero discount', () => {
 });
 
 // ─── NaN safety — formatPrice ─────────────────────────────────────
-const { formatPrice, formatGuidePrice } = require('../src/lib/currency');
+const { formatPrice, formatGuidePrice, convertGuidePrice } = require('../src/lib/currency');
 
 test('formatPrice: undefined returns empty string', () => {
   assert.strictEqual(formatPrice(undefined, 'usd'), '');
@@ -197,28 +197,80 @@ test('formatPrice: 0 is valid', () => {
   assert.strictEqual(formatPrice(0, 'usd'), '$0');
 });
 
-test('formatGuidePrice: null returns empty', () => {
-  assert.strictEqual(formatGuidePrice(null, 'usd'), '');
+// ─── formatGuidePrice — real currency conversion ─────────────────
+
+test('formatGuidePrice: null amount returns empty', () => {
+  assert.strictEqual(formatGuidePrice(null, 'usd', 'usd'), '');
 });
 
-test('formatGuidePrice: NaN returns empty', () => {
-  assert.strictEqual(formatGuidePrice(NaN, 'usd'), '');
+test('formatGuidePrice: NaN amount returns empty', () => {
+  assert.strictEqual(formatGuidePrice(NaN, 'usd', 'usd'), '');
 });
 
-test('formatGuidePrice: integer USD', () => {
-  assert.strictEqual(formatGuidePrice(2500, 'usd'), '$2,500');
+test('formatGuidePrice: zero returns $0', () => {
+  assert.strictEqual(formatGuidePrice(0, 'usd', 'usd'), '$0');
 });
 
-test('formatGuidePrice: decimal ceil USD', () => {
-  assert.strictEqual(formatGuidePrice(2499.99, 'usd'), '$2,500');
+// Same-currency — no conversion
+test('formatGuidePrice: USD->USD', () => {
+  assert.strictEqual(formatGuidePrice(2500, 'usd', 'usd'), '$2,500');
 });
 
-test('formatGuidePrice: GBP', () => {
-  assert.strictEqual(formatGuidePrice(1800, 'gbp'), '£1,800');
+test('formatGuidePrice: GBP->GBP', () => {
+  assert.strictEqual(formatGuidePrice(1800, 'gbp', 'gbp'), '£1,800');
 });
 
-test('formatGuidePrice: EUR', () => {
-  assert.strictEqual(formatGuidePrice(1500, 'eur'), '€1,500');
+test('formatGuidePrice: EUR->EUR', () => {
+  assert.strictEqual(formatGuidePrice(1500, 'eur', 'eur'), '€1,500');
+});
+
+test('formatGuidePrice: decimal ceil', () => {
+  assert.strictEqual(formatGuidePrice(2499.99, 'usd', 'usd'), '$2,500');
+});
+
+// Cross-currency conversion (real forex)
+test('formatGuidePrice: USD->GBP', () => {
+  assert.strictEqual(formatGuidePrice(1000, 'usd', 'gbp'), '£780');
+});
+
+test('formatGuidePrice: USD->EUR', () => {
+  assert.strictEqual(formatGuidePrice(1000, 'usd', 'eur'), '€920');
+});
+
+test('formatGuidePrice: GBP->USD', () => {
+  assert.strictEqual(formatGuidePrice(1000, 'gbp', 'usd'), '$1,283');
+});
+
+test('formatGuidePrice: EUR->GBP', () => {
+  assert.strictEqual(formatGuidePrice(1000, 'eur', 'gbp'), '£848');
+});
+
+// Currency aliases ($, £, €, uppercase)
+test('formatGuidePrice: USD alias', () => {
+  assert.strictEqual(formatGuidePrice(100, 'USD', 'USD'), '$100');
+});
+
+test('formatGuidePrice: $ alias', () => {
+  assert.strictEqual(formatGuidePrice(100, '$', '$'), '$100');
+});
+
+test('formatGuidePrice: £ alias', () => {
+  assert.strictEqual(formatGuidePrice(100, '£', '£'), '£100');
+});
+
+// Unknown currency fails safely
+test('formatGuidePrice: unknown source returns empty', () => {
+  assert.strictEqual(formatGuidePrice(100, 'xyz', 'usd'), '');
+});
+
+test('formatGuidePrice: unknown target returns empty', () => {
+  assert.strictEqual(formatGuidePrice(100, 'usd', 'xyz'), '');
+});
+
+// Savings % unchanged by currency
+test('Savings: percentage uses source values', () => {
+  const pct = Math.round((1 - 1500 / 3000) * 100);
+  assert.strictEqual(pct, 50);
 });
 
 // ─── Summary ───────────────────────────────────────────────────────

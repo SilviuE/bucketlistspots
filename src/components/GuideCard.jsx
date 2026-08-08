@@ -89,11 +89,11 @@ export default function GuideCard({ guide, variant = 'default' }) {
         <Box>
           <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5 }}>
             <Typography variant="body1" fontWeight={800} color="text.primary">
-                {formatGuidePrice(guide.price, currency)}
+                {formatGuidePrice(guide.price, guide.priceCurrency, currency)}
             </Typography>
             {guide.agencyPrice > 0 && (
               <Typography variant="caption" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
-                {formatGuidePrice(guide.agencyPrice, currency)}
+                {formatGuidePrice(guide.agencyPrice, guide.priceCurrency, currency)}
               </Typography>
             )}
           </Box>
