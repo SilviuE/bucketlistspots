@@ -125,8 +125,20 @@
                       "path":  "supabase/evidence/production-evidence-2026-08-07.md",
                       "sha256":  "22964CD00340A411F0B86F2E09AC9DB8644E7173D289540AD1414809FFB7E319",
                       "bytes":  1799,
-                      "role":  "production migration evidence record — 2026-08-07"
-                  }
-              ]
+                       "role":  "production migration evidence record — 2026-08-07"
+                   },
+                   {
+                       "path":  "supabase/evidence/production-evidence-2026-08-08-pr2-hotfix.md",
+                       "sha256":  "A1F227A6677D2A7F6B02728D634C5C43D173F1FEB697992CBF929E13CDCE0A40",
+                       "bytes":  2769,
+                       "role":  "PR #2 hotfix evidence — 2026-08-08"
+                   },
+                   {
+                       "path":  "supabase/evidence/pr2-hotfix-execution-2026-08-08.txt",
+                       "sha256":  "D17B3721A7372EB6C57FE5975C43564A18AE69ED1C7F86E15B252B4243EC0A39",
+                       "bytes":  1788,
+                       "role":  "PR #2 hotfix execution transcript — 2026-08-08"
+                   }
+               ]
 }
 

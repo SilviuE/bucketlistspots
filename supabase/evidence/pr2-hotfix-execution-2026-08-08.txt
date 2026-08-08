@@ -1,0 +1,54 @@
+# PR #2 Hotfix Execution Transcript — 2026-08-08
+# ================================================================
+# PR:     #2 — fix: prevent NaN guide pricing and restore agency comparison
+# Branch: hotfix/guide-card-nan -> main
+# Tested: 3727200298bb4fb113faecede6ebf6c9145927f2
+# Merged: d3c620fd4a48dfb0a9df7eef9fd3a49b4d6080cc
+# ================================================================
+
+=== STAGING EXECUTION ===
+Target: tqooyiyqsidbemzlcsfp
+
+005_guides_agency_price.sql: EXECUTED + VERIFIED
+  Added agency_price NUMERIC(10,2) NULL.
+  Idempotent re-run: no-op, type validated.
+
+006_guides_agency_price_privileges.sql: EXECUTED + VERIFIED
+  anon SELECT agency_price = true
+  authenticated SELECT agency_price = true
+  No INSERT/UPDATE leaked.
+  no table-wide SELECT on guides granted.
+
+REST query via Deploy Preview (staging): 200 OK, 2 published guides.
+
+=== NETLIFY ENVIRONMENT CORRECTION ===
+Deploy Preview VITE_SUPABASE_URL: Production -> Staging
+Deploy Preview VITE_SUPABASE_ANON_KEY: Production -> Staging
+Production-scoped variables unchanged.
+
+=== PRODUCTION EXECUTION ===
+Target: nmyhytrnzfhdstqazttb
+
+Pre-006 audit:
+  agency_price: INTEGER, nullable, no default
+  anon column SELECT: false
+  authenticated column SELECT: false
+  RLS: enabled, guides_select_published present
+
+006_guides_agency_price_privileges.sql: EXECUTED + VERIFIED
+  Success. No rows returned.
+
+Post-006:
+  anon column SELECT: true
+  authenticated column SELECT: true
+  INSERT/UPDATE anon+authenticated: false
+  table-wide SELECT anon+authenticated: false
+
+=== PRODUCTION DEPLOY ===
+Netlify deploy: SUCCESS, 2026-08-08 ~09:34 UK
+7 published guides verified, $NaN absent, Save NaN% absent.
+
+=== CONSTRAINTS ===
+Terms: draft-0.3, DRAFT
+Stripe/JustGiving: disabled
+Live launch: not activated
