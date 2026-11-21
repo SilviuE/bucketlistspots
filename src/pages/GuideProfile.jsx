@@ -5,13 +5,11 @@ import {
 } from '@mui/material';
 import SEO from '../components/SEO';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import StarIcon from '@mui/icons-material/Star';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import LanguageIcon from '@mui/icons-material/Language';
-import GroupsIcon from '@mui/icons-material/Groups';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
+import { isTrustVerified, toArray, fromPrice } from '../lib/trust';
 import TrustBadge from '../components/TrustBadge';
 import ImpactCalculator from '../components/ImpactCalculator';
 import { fetchGuideById } from '../lib/api';
@@ -51,6 +49,12 @@ export default function GuideProfile() {
 
   const saved = isGuideSaved(guide.id);
   const currency = getStoredCurrency();
+  const verified = isTrustVerified(guide);
+  const languages = toArray(guide.languages);
+  const promises = toArray(guide.promise);
+  const certifications = toArray(guide.certifications);
+  const routes = toArray(guide.routes).filter((r, i, all) => all.findIndex(x => x?.name === r?.name && x?.days === r?.days) === i);
+  const price = fromPrice(guide);
 
   return (
     <Box>
@@ -78,55 +82,45 @@ export default function GuideProfile() {
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <Typography variant="h1" noWrap sx={{ fontSize: '1.5rem', fontWeight: 700 }}>{guide.name}</Typography>
-              {guide.badge === 'premium' && <VerifiedIcon sx={{ color: 'secondary.main', fontSize: 22 }} />}
+              {verified && <VerifiedIcon sx={{ color: 'secondary.main', fontSize: 22 }} />}
             </Box>
             <Typography variant="body2" color="text.secondary">{guide.tradingName}</Typography>
             <Typography variant="caption" color="text.secondary">{guide.location}</Typography>
           </Box>
         </Box>
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <StarIcon sx={{ color: '#FFB800', fontSize: 20 }} />
-            <Typography fontWeight={700}>{guide.rating}</Typography>
-            <Typography variant="caption" color="text.secondary">({guide.reviewCount})</Typography>
-          </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <GroupsIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-            <Typography variant="caption" color="text.secondary">{guide.followers} followers</Typography>
-          </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <ThumbUpIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-            <Typography variant="caption" color="text.secondary">{guide.tripsLed} trips</Typography>
-          </Box>
+        <Box sx={{ mb: 1.5 }}>
+          {verified ? (
+            <TrustBadge guide={guide} size="list" />
+          ) : (
+            <Chip label="Trust Gate verification in progress — documents under review" size="small" variant="outlined" />
+          )}
         </Box>
-
-        <TrustBadge guide={guide} size="list" />
 
         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1.5, mb: 2 }}>
-          <Chip label={guide.vibe} color="secondary" size="small" />
-          {guide.languages.map(lang => (
+          {guide.vibe && <Chip label={guide.vibe} color="secondary" size="small" />}
+          {languages.map(lang => (
             <Chip key={lang} icon={<LanguageIcon sx={{ fontSize: 14 }} />} label={lang} variant="outlined" size="small" />
           ))}
-          <Chip label={`${guide.experience} years experience`} variant="outlined" size="small" />
+          {guide.experience > 0 && <Chip label={`${guide.experience} years experience`} variant="outlined" size="small" />}
         </Box>
 
-        <Box sx={{ display: 'flex', gap: 1, mb: 3 }}>
+        <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
           <Button
             variant="contained"
             color="primary"
             size="large"
             fullWidth
-            onClick={() => navigate(`/checkout/${guide.id}`)}
+            onClick={() => navigate(`/kilimanjaro?guide=${encodeURIComponent(guide.id)}#quote`)}
           >
-            Book {formatPrice(guide.price, currency)}
-          </Button>
-          <Button variant="outlined" size="large" sx={{ minWidth: 48, px: 2 }}>
-            Message
+            Request a free quote{price ? ` · from ${formatPrice(price, currency)}` : ''}
           </Button>
         </Box>
+        <Typography variant="caption" color="text.secondary" display="block" mb={3}>
+          No payment now. You receive a written quote from the operator before deciding.
+        </Typography>
 
-        <ImpactCalculator guidePrice={guide.price} agencyPrice={guide.agencyPrice} />
+        <ImpactCalculator guidePrice={price || 0} />
 
         <Paper elevation={0} sx={{ p: 2, mt: 2, border: '1px solid rgba(16,42,67,0.08)' }}>
           <Typography variant="body2" fontWeight={700} mb={1}>My Story</Typography>
@@ -140,7 +134,7 @@ export default function GuideProfile() {
 
         <Paper elevation={0} sx={{ p: 2, mt: 2, border: '1px solid rgba(16,42,67,0.08)' }}>
           <Typography variant="body2" fontWeight={700} mb={1.5}>My Promise to You</Typography>
-          {guide.promise.map((p, i) => (
+          {promises.map((p, i) => (
             <Box key={i} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 0.5 }}>
               <VerifiedIcon sx={{ color: '#2A9D8F', fontSize: 16, mt: 0.3 }} />
               <Typography variant="body2" color="text.secondary">{p}</Typography>
@@ -150,9 +144,9 @@ export default function GuideProfile() {
 
         <Paper elevation={0} sx={{ p: 2, mt: 2, border: '1px solid rgba(16,42,67,0.08)' }}>
           <Typography variant="body2" fontWeight={700} mb={1.5}>Available Routes</Typography>
-          {guide.routes.map(route => (
+          {routes.map((route, i) => (
             <Box
-              key={route.name}
+              key={`${route.name}-${i}`}
               sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 1.5, borderBottom: '1px solid rgba(16,42,67,0.06)', '&:last-child': { borderBottom: 0 } }}
             >
               <Box>
@@ -171,7 +165,7 @@ export default function GuideProfile() {
 
         <Paper elevation={0} sx={{ p: 2, mt: 2, mb: 3, border: '1px solid rgba(16,42,67,0.08)' }}>
           <Typography variant="body2" fontWeight={700} mb={1.5}>Certifications</Typography>
-          {guide.certifications.map(cert => (
+          {certifications.map(cert => (
             <Box key={cert} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
               <VerifiedIcon sx={{ color: '#102A43', fontSize: 16 }} />
               <Typography variant="body2" color="text.secondary">{cert}</Typography>

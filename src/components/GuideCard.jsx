@@ -2,18 +2,22 @@ import { useNavigate } from 'react-router-dom';
 import {
   Card, CardMedia, CardContent, CardActions, Box, Typography, Chip, IconButton, Avatar,
 } from '@mui/material';
-import StarIcon from '@mui/icons-material/Star';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import { useAuth } from '../context/AuthContext';
-import { formatPrice, formatGuidePrice, getStoredCurrency } from '../lib/currency';
+import { formatGuidePrice, getStoredCurrency } from '../lib/currency';
+import { isTrustVerified, toArray, fromPrice } from '../lib/trust';
 
 export default function GuideCard({ guide, variant = 'default' }) {
   const navigate = useNavigate();
   const { isGuideSaved, toggleSavedGuide } = useAuth();
   const saved = isGuideSaved(guide.id);
   const currency = getStoredCurrency();
+  const verified = isTrustVerified(guide);
+  const languages = toArray(guide.languages);
+  const routes = toArray(guide.routes);
+  const price = fromPrice(guide);
 
   if (variant === 'compact') {
     return (
@@ -27,12 +31,12 @@ export default function GuideCard({ guide, variant = 'default' }) {
             <Typography variant="body2" fontWeight={700} noWrap>{guide.name}</Typography>
             <Typography variant="caption" color="text.secondary" noWrap>{guide.location}</Typography>
           </Box>
-          {guide.badge === 'premium' && (
+          {verified && (
             <VerifiedIcon sx={{ color: 'secondary.main', fontSize: 20 }} />
           )}
         </Box>
         <Box sx={{ px: 2, pb: 2, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-          {guide.routes.slice(0, 2).map(r => (
+          {routes.slice(0, 2).map(r => (
             <Chip key={r.name} label={r.name} size="small" variant="outlined" sx={{ height: 24, fontSize: 11 }} />
           ))}
         </Box>
@@ -58,7 +62,7 @@ export default function GuideCard({ guide, variant = 'default' }) {
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <Typography variant="body1" fontWeight={700} noWrap>{guide.name}</Typography>
-              {guide.badge === 'premium' && (
+              {verified && (
                 <VerifiedIcon sx={{ color: 'secondary.main', fontSize: 18 }} />
               )}
             </Box>
@@ -73,40 +77,38 @@ export default function GuideCard({ guide, variant = 'default' }) {
           </IconButton>
         </Box>
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
-          <StarIcon sx={{ color: '#FFB800', fontSize: 18 }} />
-          <Typography variant="body2" fontWeight={700}>{guide.rating}</Typography>
-          <Typography variant="caption" color="text.secondary">({guide.reviewCount} reviews)</Typography>
+        <Box sx={{ mt: 1 }}>
+          {verified ? (
+            <Chip icon={<VerifiedIcon sx={{ fontSize: 14 }} />} label="Trust Gate verified" size="small" color="secondary" sx={{ height: 24, fontSize: 11 }} />
+          ) : (
+            <Chip label="Verification in progress" size="small" variant="outlined" sx={{ height: 24, fontSize: 11 }} />
+          )}
         </Box>
 
         <Box sx={{ display: 'flex', gap: 0.5, mt: 1, flexWrap: 'wrap' }}>
-          <Chip label={guide.vibe} size="small" color="secondary" variant="outlined" sx={{ borderColor: 'secondary.main', color: 'secondary.main', height: 24, fontSize: 11 }} />
-          <Chip label={`${guide.experience} yrs`} size="small" variant="outlined" sx={{ height: 24, fontSize: 11 }} />
-          <Chip label={guide.languages[0]} size="small" variant="outlined" sx={{ height: 24, fontSize: 11 }} />
+          {guide.vibe && <Chip label={guide.vibe} size="small" color="secondary" variant="outlined" sx={{ borderColor: 'secondary.main', color: 'secondary.main', height: 24, fontSize: 11 }} />}
+          {guide.experience > 0 && <Chip label={`${guide.experience} yrs`} size="small" variant="outlined" sx={{ height: 24, fontSize: 11 }} />}
+          {languages[0] && <Chip label={languages[0]} size="small" variant="outlined" sx={{ height: 24, fontSize: 11 }} />}
         </Box>
       </CardContent>
       <CardActions sx={{ px: 2, pb: 2, justifyContent: 'space-between' }}>
         <Box>
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5 }}>
-            <Typography variant="body1" fontWeight={800} color="text.primary">
-                {formatGuidePrice(guide.price, currency)}
-            </Typography>
-            {guide.agencyPrice > 0 && (
-              <Typography variant="caption" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
-                {formatGuidePrice(guide.agencyPrice, currency)}
+          {price ? (
+            <>
+              <Typography variant="caption" color="text.secondary">from</Typography>
+              <Typography variant="body1" fontWeight={800} color="text.primary">
+                {formatGuidePrice(price, currency)}
               </Typography>
-            )}
-          </Box>
-          {guide.agencyPrice > 0 && (
-            <Typography variant="caption" color="secondary.main" fontWeight={600}>
-              Save {Math.round((1 - guide.price / guide.agencyPrice) * 100)}% vs agency
-            </Typography>
+              <Typography variant="caption" color="text.secondary">per person</Typography>
+            </>
+          ) : (
+            <Typography variant="body2" fontWeight={700}>Price on request</Typography>
           )}
         </Box>
         <Chip
-          label="Book Direct"
+          label="Request a quote"
           color="primary"
-          onClick={(e) => { e.stopPropagation(); navigate(`/guide/${guide.id}`); }}
+          onClick={(e) => { e.stopPropagation(); navigate(`/kilimanjaro?guide=${encodeURIComponent(guide.id)}#quote`); }}
           sx={{ fontWeight: 700, height: 36, '& .MuiChip-label': { px: 2 } }}
         />
       </CardActions>

@@ -47,7 +47,7 @@ export default function HeroSection() {
         <Typography
           sx={{ color: 'rgba(255,255,255,0.8)', mb: 3, fontSize: '15px', lineHeight: '22px' }}
         >
-          Guided expeditions from Moshi, Tanzania. Local experts, fair wages, world-class safety.
+          Book directly with local Kilimanjaro operators from Moshi, Tanzania. Transparent prices, fair crew pay, Trust Gate checks.
         </Typography>
         <SearchBar variant="hero" />
       </Container>

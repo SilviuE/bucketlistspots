@@ -19,6 +19,9 @@ import AdminPaymentReports from './pages/AdminPaymentReports';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import DestinationPage from './pages/DestinationPage';
+import LandingTravellers from './pages/LandingTravellers';
+import LandingGuides from './pages/LandingGuides';
+import LandingAmbassadors from './pages/LandingAmbassadors';
 
 export default function App() {
   return (
@@ -43,6 +46,9 @@ export default function App() {
         <Route path="/terms" element={<Terms />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/destination/:slug" element={<DestinationPage />} />
+        <Route path="/kilimanjaro" element={<LandingTravellers />} />
+        <Route path="/join/guides" element={<LandingGuides />} />
+        <Route path="/join/ambassadors" element={<LandingAmbassadors />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

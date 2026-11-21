@@ -703,6 +703,98 @@ async function handleApplyAmbassador(event) {
   }
 }
 
+// ─── Traveller Enquiry (Enquiry-First launch: no payment taken) ───────
+function escapeHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function handleTravellerEnquiry(event) {
+  if (event.httpMethod !== 'POST') return json({ error: 'Method not allowed' }, 405);
+
+  const ip = event.headers?.['x-forwarded-for'] || event.headers?.['client-ip'] || 'anon';
+  if (rateLimit(`te:${ip}`, 5, 15 * 60000)) {
+    safeLog('enquiry', event, { blocked: 'rate_limit' });
+    return json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
+  try {
+    const body = reqBody(event);
+
+    if (body.faxNumber) {
+      safeLog('enquiry', event, { blocked: 'honeypot' });
+      return json({ ok: true });
+    }
+
+    const s = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+    const t = {
+      fullName: s(body.fullName, 200),
+      email: s(body.email, 254).toLowerCase(),
+      whatsapp: s(body.whatsapp, 30),
+      country: s(body.country, 100),
+      route: s(body.route, 120),
+      guideId: s(body.guideId, 100),
+      travelMonth: s(body.travelMonth, 40),
+      groupSize: Math.min(Math.max(parseInt(body.groupSize, 10) || 1, 1), 50),
+      budget: s(body.budget, 60),
+      charityClimb: body.charityClimb === true,
+      message: s(body.message, 2000),
+      ref: s(body.ref, 100),
+      utmSource: s(body.utm_source, 100),
+      utmMedium: s(body.utm_medium, 100),
+      utmCampaign: s(body.utm_campaign, 100),
+    };
+
+    if (!t.fullName || !t.email) return json({ error: 'Please add your name and email.' }, 400);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t.email)) return json({ error: 'Invalid email address' }, 400);
+    if (body.consentGiven !== true) return json({ error: 'Please accept the privacy notice.' }, 400);
+
+    const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { db: { schema: 'public' } });
+
+    const { error: dbError } = await supabase.from('traveller_enquiries').insert({
+      full_name: t.fullName, email: t.email, whatsapp: t.whatsapp || null, country: t.country || null,
+      route: t.route || null, guide_id: t.guideId || null, travel_month: t.travelMonth || null,
+      group_size: t.groupSize, budget: t.budget || null, charity_climb: t.charityClimb,
+      message: t.message || null, ref_code: t.ref || null,
+      utm_source: t.utmSource || null, utm_medium: t.utmMedium || null, utm_campaign: t.utmCampaign || null,
+    });
+    if (dbError) throw dbError;
+
+    safeLog('enquiry', event, { created: true, utm_source: t.utmSource || null, ref: t.ref ? 'yes' : 'no' });
+
+    if (process.env.RESEND_API_KEY && process.env.NOTIFICATION_EMAIL) {
+      const rows = [['Name', t.fullName], ['Email', t.email], ['WhatsApp', t.whatsapp], ['Country', t.country],
+        ['Route', t.route], ['Guide', t.guideId], ['Month', t.travelMonth], ['Group size', t.groupSize],
+        ['Budget', t.budget], ['Charity climb', t.charityClimb ? 'Yes' : 'No'], ['Message', t.message],
+        ['Ambassador ref', t.ref], ['UTM', [t.utmSource, t.utmMedium, t.utmCampaign].filter(Boolean).join(' / ')]];
+      const html = `<h2>New traveller enquiry — reply within 24h</h2><table style="border-collapse:collapse;width:100%">${
+        rows.map(([k, v]) => `<tr style="border:1px solid #ddd"><td style="padding:8px;font-weight:700">${escapeHtml(k)}</td><td style="padding:8px">${escapeHtml(v) || '—'}</td></tr>`).join('')
+      }</table>`;
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'BucketListSpots <notifications@bucketlistspots.com>',
+            to: process.env.NOTIFICATION_EMAIL,
+            reply_to: t.email,
+            subject: `New enquiry: ${t.fullName} — ${t.route || 'Kilimanjaro'} (${t.groupSize} pax)`,
+            html,
+          }),
+        });
+      } catch (mailErr) {
+        safeLog('enquiry', event, { mail_error: mailErr.message });
+      }
+    }
+
+    return json({ ok: true });
+  } catch (err) {
+    safeLog('enquiry', event, { error: err.message });
+    return json({ error: 'Something went wrong. Please email hello@bucketlistspots.com.' }, 500);
+  }
+}
+
 // ─── Admin Applications ───────────────────────────────────────────────
 async function handleApplications(event) {
   const result = await authenticateAdmin(event);
@@ -1507,6 +1599,8 @@ exports.handler = async (event) => {
       return handleApplyGuide(event);
     case 'apply-ambassador':
       return handleApplyAmbassador(event);
+    case 'enquiry':
+      return handleTravellerEnquiry(event);
     case 'applications':
       return handleApplications(event);
     case 'guide-profile':

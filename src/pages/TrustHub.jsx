@@ -1,4 +1,5 @@
-import { Box, Container, Typography, Paper } from '@mui/material';
+import { useEffect, useState } from 'react';
+import { Box, Container, Typography, Paper, Chip } from '@mui/material';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import GppGoodIcon from '@mui/icons-material/GppGood';
 import PaymentIcon from '@mui/icons-material/Payment';
@@ -6,13 +7,14 @@ import PeopleIcon from '@mui/icons-material/People';
 import SEO from '../components/SEO';
 import TrustBadge from '../components/TrustBadge';
 import VerificationChecklist from '../components/VerificationChecklist';
-import guides from '../data/guides';
+import { fetchGuides } from '../lib/api';
+import { isTrustVerified } from '../lib/trust';
 
 const values = [
   {
     icon: VerifiedIcon,
     title: 'Verified Local Guides',
-    desc: 'Every guide on our platform passes our rigorous 5-step Trust Gate verification process.',
+    desc: 'A guide is marked Verified only after every Trust Gate check is completed. Until then, the profile clearly says verification is in progress.',
   },
   {
     icon: GppGoodIcon,
@@ -27,11 +29,13 @@ const values = [
   {
     icon: PaymentIcon,
     title: 'Traveler Protection',
-    desc: 'As a UK registered company, we provide legal and financial recourse if things go wrong.',
+    desc: 'BucketListSpots Ltd is a UK-registered company (No. 16595661), registered with the ICO (ZC028025). You always see which local operator runs your trip before you commit.',
   },
 ];
 
 export default function TrustHub() {
+  const [guides, setGuides] = useState([]);
+  useEffect(() => { fetchGuides().then(setGuides).catch(() => setGuides([])); }, []);
   return (
     <Container maxWidth="sm" sx={{ px: 2, pt: 2, pb: 4 }}>
       <SEO
@@ -60,7 +64,7 @@ export default function TrustHub() {
 
       <Typography variant="h2" mb={2}>Our Verification Process</Typography>
       <Typography variant="body2" color="text.secondary" mb={2}>
-        We don't just list guides — we curate local legends. Every "Verified Local" badge is earned through rigorous vetting.
+        Verification means we reviewed specific evidence (identity, licences, safety and crew-pay practices). It does not mean we supervise daily operations.
       </Typography>
       <VerificationChecklist />
 
@@ -69,15 +73,15 @@ export default function TrustHub() {
           Why Trust Matters
         </Typography>
         <Typography sx={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>
-          We are a UK registered company (No. 16595661) bound by UK consumer protection laws, GDPR, and strict data handling standards. Your booking is protected.
+          We are a UK registered company (No. 16595661) subject to UK consumer protection law and UK GDPR. We act as a disclosed booking agent: your trip contract is with the named local operator.
         </Typography>
       </Box>
 
-      <Typography variant="h2" mb={2}>Meet Our Verified Guides</Typography>
+      <Typography variant="h2" mb={2}>Our Local Partners</Typography>
       <Box sx={{ display: 'flex', gap: 1.5, overflowX: 'auto', pb: 1, '&::-webkit-scrollbar': { display: 'none' } }}>
         {guides.map(guide => (
           <Box key={guide.id} sx={{ minWidth: 200, p: 1.5, bgcolor: '#FFFFFF', borderRadius: 3, border: '1px solid rgba(16,42,67,0.12)' }}>
-            <TrustBadge guide={guide} />
+            {isTrustVerified(guide) ? <TrustBadge guide={guide} /> : <Chip label="Verification in progress" size="small" variant="outlined" />}
             <Typography variant="body2" fontWeight={700} mt={1}>{guide.name}</Typography>
             <Typography variant="caption" color="text.secondary">{guide.location}</Typography>
           </Box>

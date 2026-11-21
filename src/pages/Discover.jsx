@@ -68,7 +68,7 @@ export default function Discover() {
           ))}
         </Box>
 
-        <Box sx={{ mt: 4 }}>
+        {featuredExperiences.length > 0 && <Box sx={{ mt: 4 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
             <Typography variant="h2">Trending Adventures</Typography>
             <Button variant="text" size="small" endIcon={<ArrowForwardIcon />} href="/book" sx={{ fontSize: 13 }}>
@@ -80,9 +80,9 @@ export default function Discover() {
               <ExperienceCard key={exp.id} experience={exp} />
             ))}
           </Box>
-        </Box>
+        </Box>}
 
-        <Box sx={{ mt: 4 }}>
+        {destinations.length > 0 && <Box sx={{ mt: 4 }}>
           <Typography variant="h2" mb={1.5}>Explore Destinations</Typography>
           <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', pb: 1, '&::-webkit-scrollbar': { display: 'none' } }}>
             {destinations.map(dest => {
@@ -111,7 +111,7 @@ export default function Discover() {
               );
             })}
           </Box>
-        </Box>
+        </Box>}
 
         <Box sx={{ mt: 4, mb: 3, p: 3, bgcolor: '#102A43', borderRadius: 4, textAlign: 'center' }}>
           <Typography variant="h2" sx={{ color: '#FFFFFF', mb: 1 }}>
@@ -120,7 +120,7 @@ export default function Discover() {
           <Typography sx={{ color: 'rgba(255,255,255,0.8)', fontSize: 14, mb: 2 }}>
             Get a professional website, booking system, and global visibility.
           </Typography>
-          <Button variant="contained" color="primary" size="large" href="/for-guides">
+          <Button variant="contained" color="primary" size="large" href="/join/guides">
             Join as a Guide
           </Button>
         </Box>

@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom';
 import { Card, CardMedia, CardContent, Box, Typography, Chip, IconButton } from '@mui/material';
-import StarIcon from '@mui/icons-material/Star';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -38,12 +37,6 @@ export default function ExperienceCard({ experience }) {
           >
             {saved ? <FavoriteIcon fontSize="small" /> : <FavoriteBorderIcon fontSize="small" />}
           </IconButton>
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
-          <StarIcon sx={{ color: '#FFB800', fontSize: 16 }} />
-          <Typography variant="caption" fontWeight={700}>{experience.rating}</Typography>
-          <Typography variant="caption" color="text.secondary">({experience.reviews})</Typography>
         </Box>
 
         <Box sx={{ display: 'flex', gap: 0.5, mt: 1, flexWrap: 'wrap' }}>
